@@ -1,5 +1,22 @@
 {
   "dependencies": {
+    "com.hecomi.uosc": {
+      "version": "https://github.com/hecomi/uOSC.git#upm",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "3788ab28702c44330bfea7323b2e05bc4d23c213"
+    },
+    "com.mizotake.unity-ui-sync": {
+      "version": "file:com.mizotake.unity-ui-sync",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.hecomi.uosc": "1.0.0",
+        "com.unity.textmeshpro": "3.0.6",
+        "com.unity.ugui": "1.0.0"
+      }
+    },
     "com.unity.collab-proxy": {
       "version": "2.12.4",
       "depth": 0,
@@ -134,6 +151,13 @@
         "com.unity.modules.jsonserialize": "1.0.0"
       },
       "url": "https://packages.unity.com"
+    },
+    "com.yucchiy.unicli-server": {
+      "version": "https://github.com/yucchiy/UniCli.git?path=src/UniCli.Unity/Packages/com.yucchiy.unicli-server#v1.2.2",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "88596adaae70d6639e8f251b57bdb715399d96ce"
     },
     "com.unity.modules.ai": {
       "version": "1.0.0",
