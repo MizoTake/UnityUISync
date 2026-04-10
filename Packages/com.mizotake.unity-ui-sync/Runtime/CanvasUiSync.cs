@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using uOSC;
 using UnityEngine;
 using UnityEngine.UI;
@@ -34,6 +33,9 @@ namespace Mizotake.UnityUiSync
         private readonly Dictionary<string, float> lastProposeTimes = new Dictionary<string, float>();
         private readonly Dictionary<string, DeferredStateCommit> deferredCommits = new Dictionary<string, DeferredStateCommit>();
         private readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
+        private readonly List<string> stateCacheKeysToRemove = new List<string>();
+        private readonly List<string> expiredSnapshotIds = new List<string>();
+        private readonly List<string> expiredNodeIds = new List<string>();
         private string registryHash = string.Empty;
         private string canvasId = string.Empty;
         private string sessionId = string.Empty;
@@ -166,6 +168,7 @@ namespace Mizotake.UnityUiSync
         {
             localStates.Clear();
             latestAppliedButtonStamps.Clear();
+            PruneTransientStateCaches();
             foreach (var pair in bindings)
             {
                 if (pair.Value.ValueType == "Button")
@@ -177,31 +180,76 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private void OnOscMessageReceived(Message message)
+        private void PruneTransientStateCaches()
         {
-            if (message.values == null)
+            RemoveMissingBindingState(lastProposedValues);
+            RemoveMissingBindingState(lastProposeTimes);
+            RemoveMissingBindingState(deferredCommits);
+        }
+
+        private void RemoveMissingBindingState<TValue>(Dictionary<string, TValue> valuesBySyncId)
+        {
+            if (valuesBySyncId.Count == 0)
             {
                 return;
             }
 
-            receivedMessageCount++;
-            receivedValueCount += message.values.Length;
-            receivedApproxBytes += EstimatePayloadBytes(message.address, message.values);
-
-            switch (message.address)
+            stateCacheKeysToRemove.Clear();
+            foreach (var syncId in valuesBySyncId.Keys)
             {
-                case HelloAddress: HandleHello(message.values); break;
-                case RequestSnapshotAddress: HandleRequestSnapshot(message.values); break;
-                case BeginSnapshotAddress: HandleBeginSnapshot(message.values); break;
-                case SnapshotStateAddress: HandleSnapshotState(message.values); break;
-                case EndSnapshotAddress: HandleEndSnapshot(message.values); break;
+                if (!bindings.ContainsKey(syncId))
+                {
+                    stateCacheKeysToRemove.Add(syncId);
+                }
+            }
+
+            foreach (var syncId in stateCacheKeysToRemove)
+            {
+                valuesBySyncId.Remove(syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
+        }
+
+        private void OnOscMessageReceived(Message message)
+        {
+            HandleReceivedPayload(message.address, message.values);
+        }
+
+        private void HandleReceivedPayload(string address, object[] values)
+        {
+            if (values == null)
+            {
+                return;
+            }
+
+            RecordReceivedPayload(address, values);
+            DispatchReceivedPayload(address, values);
+        }
+
+        private void RecordReceivedPayload(string address, object[] values)
+        {
+            receivedMessageCount++;
+            receivedValueCount += values.Length;
+            receivedApproxBytes += EstimatePayloadBytes(address, values);
+        }
+
+        private void DispatchReceivedPayload(string address, object[] values)
+        {
+            switch (address)
+            {
+                case HelloAddress: HandleHello(values); break;
+                case RequestSnapshotAddress: HandleRequestSnapshot(values); break;
+                case BeginSnapshotAddress: HandleBeginSnapshot(values); break;
+                case SnapshotStateAddress: HandleSnapshotState(values); break;
+                case EndSnapshotAddress: HandleEndSnapshot(values); break;
                 case ProposeStateAddress:
                 case CommitStateAddress:
-                    HandleCommitState(message.values);
+                    HandleCommitState(values);
                     break;
                 case ProposeButtonAddress:
                 case CommitButtonAddress:
-                    HandleCommitButton(message.values);
+                    HandleCommitButton(values);
                     break;
             }
         }
@@ -596,7 +644,7 @@ namespace Mizotake.UnityUiSync
 
         private void RequestSnapshotIfNeeded(bool force)
         {
-            if (!GetActivePeerTargets().Any())
+            if (!HasActivePeerTarget())
             {
                 hasSnapshot = true;
                 return;
@@ -630,8 +678,16 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            var expired = activeSnapshotIds.Where(pair => pair.Value <= now).Select(pair => pair.Key).ToArray();
-            foreach (var snapshotId in expired)
+            expiredSnapshotIds.Clear();
+            foreach (var pair in activeSnapshotIds)
+            {
+                if (pair.Value <= now)
+                {
+                    expiredSnapshotIds.Add(pair.Key);
+                }
+            }
+
+            foreach (var snapshotId in expiredSnapshotIds)
             {
                 activeSnapshotIds.Remove(snapshotId);
                 if (profile.verboseLog)
@@ -639,6 +695,8 @@ namespace Mizotake.UnityUiSync
                     Debug.LogWarning("CanvasUiSync snapshot timeout cleanup: " + snapshotId + " canvas=" + canvasId, this);
                 }
             }
+
+            expiredSnapshotIds.Clear();
         }
 
         private void TickPeriodicResync(float now)
@@ -692,22 +750,56 @@ namespace Mizotake.UnityUiSync
 
         private IEnumerable<CanvasUiSyncRemoteEndpoint> GetActivePeerTargets()
         {
-            return profile.peerEndpoints.Where(endpoint => endpoint != null && endpoint.enabled && endpoint.port > 0 && !string.IsNullOrWhiteSpace(endpoint.ipAddress) && !string.Equals(endpoint.name, profile.nodeId, StringComparison.Ordinal));
+            if (profile.peerEndpoints == null)
+            {
+                yield break;
+            }
+
+            foreach (var endpoint in profile.peerEndpoints)
+            {
+                if (IsPeerTargetActive(endpoint))
+                {
+                    yield return endpoint;
+                }
+            }
         }
 
         private CanvasUiSyncRemoteEndpoint FindPeerTarget(string nodeId)
         {
-            return GetActivePeerTargets().FirstOrDefault(endpoint => string.Equals(endpoint.name, nodeId, StringComparison.Ordinal));
+            if (profile.peerEndpoints == null)
+            {
+                return null;
+            }
+
+            foreach (var endpoint in profile.peerEndpoints)
+            {
+                if (IsPeerTargetActive(endpoint) && string.Equals(endpoint.name, nodeId, StringComparison.Ordinal))
+                {
+                    return endpoint;
+                }
+            }
+
+            return null;
         }
 
         private void TickNodeTimeout(float now)
         {
-            var expired = nodes.Values.Where(node => now - node.LastSeenAt > Mathf.Max(0.1f, profile.nodeTimeoutSeconds)).Select(node => node.NodeId).ToArray();
-            foreach (var nodeId in expired)
+            expiredNodeIds.Clear();
+            foreach (var node in nodes.Values)
+            {
+                if (now - node.LastSeenAt > Mathf.Max(0.1f, profile.nodeTimeoutSeconds))
+                {
+                    expiredNodeIds.Add(node.NodeId);
+                }
+            }
+
+            foreach (var nodeId in expiredNodeIds)
             {
                 nodes.Remove(nodeId);
                 Debug.LogWarning("CanvasUiSync peer leave: " + nodeId + " canvas=" + canvasId, this);
             }
+
+            expiredNodeIds.Clear();
         }
 
         private void FlushPendingCommits(float now)
@@ -728,34 +820,36 @@ namespace Mizotake.UnityUiSync
 
         private void SendSnapshot(CanvasUiSync target)
         {
-            var snapshotId = Guid.NewGuid().ToString("N");
-            target.HandleBeginSnapshot(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
-            foreach (var pair in bindings.Where(pair => pair.Value.ValueType != "Button"))
-            {
-                if (localStates.TryGetValue(pair.Key, out var state))
-                {
-                    target.HandleSnapshotState(new object[] { snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), state.Stamp.LogicalTicks, state.Stamp.NodeId, state.Stamp.Sequence });
-                }
-            }
-
-            target.HandleEndSnapshot(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
-            Debug.Log("CanvasUiSync snapshot served: " + canvasId + " snapshotId=" + snapshotId, this);
+            SendSnapshotCore(values => target.HandleBeginSnapshot(values), values => target.HandleSnapshotState(values), values => target.HandleEndSnapshot(values));
         }
 
         private void SendSnapshot(string ipAddress, int port)
         {
+            SendSnapshotCore(values => SendTo(ipAddress, port, BeginSnapshotAddress, values), values => SendTo(ipAddress, port, SnapshotStateAddress, values), values => SendTo(ipAddress, port, EndSnapshotAddress, values));
+        }
+
+        private void SendSnapshotCore(Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
+        {
             var snapshotId = Guid.NewGuid().ToString("N");
-            SendTo(ipAddress, port, BeginSnapshotAddress, snapshotId, canvasId, profile.nodeId, sessionId);
-            foreach (var pair in bindings.Where(pair => pair.Value.ValueType != "Button"))
+            sendBegin(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
+            foreach (var values in EnumerateSnapshotStateValues(snapshotId))
             {
-                if (localStates.TryGetValue(pair.Key, out var state))
-                {
-                    SendTo(ipAddress, port, SnapshotStateAddress, snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), state.Stamp.LogicalTicks, state.Stamp.NodeId, state.Stamp.Sequence);
-                }
+                sendState(values);
             }
 
-            SendTo(ipAddress, port, EndSnapshotAddress, snapshotId, canvasId, profile.nodeId, sessionId);
+            sendEnd(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
             Debug.Log("CanvasUiSync snapshot served: " + canvasId + " snapshotId=" + snapshotId, this);
+        }
+
+        private IEnumerable<object[]> EnumerateSnapshotStateValues(string snapshotId)
+        {
+            foreach (var pair in bindings)
+            {
+                if (pair.Value.ValueType != "Button" && localStates.TryGetValue(pair.Key, out var state))
+                {
+                    yield return new object[] { snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), state.Stamp.LogicalTicks, state.Stamp.NodeId, state.Stamp.Sequence };
+                }
+            }
         }
 
         private void BroadcastCommit(string syncId, string valueType, object value, StateStamp stamp)
@@ -919,7 +1013,15 @@ namespace Mizotake.UnityUiSync
 
         private CanvasUiSync FindLocalPeerTarget(string nodeId)
         {
-            return ActiveInstances.FirstOrDefault(instance => instance != null && instance != this && instance.initialized && instance.profile != null && string.Equals(instance.profile.nodeId, nodeId, StringComparison.Ordinal) && string.Equals(instance.canvasId, canvasId, StringComparison.Ordinal));
+            foreach (var instance in ActiveInstances)
+            {
+                if (instance != null && instance != this && instance.initialized && instance.profile != null && string.Equals(instance.profile.nodeId, nodeId, StringComparison.Ordinal) && string.Equals(instance.canvasId, canvasId, StringComparison.Ordinal))
+                {
+                    return instance;
+                }
+            }
+
+            return null;
         }
 
         private bool TrySendToLocalPeer(string nodeId, string address, params object[] values)
@@ -939,26 +1041,30 @@ namespace Mizotake.UnityUiSync
 
         private void ReceiveLocalMessage(string address, object[] values)
         {
-            receivedMessageCount++;
-            receivedValueCount += values.Length;
-            receivedApproxBytes += EstimatePayloadBytes(address, values);
+            HandleReceivedPayload(address, values);
+        }
 
-            switch (address)
+        private bool HasActivePeerTarget()
+        {
+            if (profile.peerEndpoints == null)
             {
-                case HelloAddress: HandleHello(values); break;
-                case RequestSnapshotAddress: HandleRequestSnapshot(values); break;
-                case BeginSnapshotAddress: HandleBeginSnapshot(values); break;
-                case SnapshotStateAddress: HandleSnapshotState(values); break;
-                case EndSnapshotAddress: HandleEndSnapshot(values); break;
-                case ProposeStateAddress:
-                case CommitStateAddress:
-                    HandleCommitState(values);
-                    break;
-                case ProposeButtonAddress:
-                case CommitButtonAddress:
-                    HandleCommitButton(values);
-                    break;
+                return false;
             }
+
+            foreach (var endpoint in profile.peerEndpoints)
+            {
+                if (IsPeerTargetActive(endpoint))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsPeerTargetActive(CanvasUiSyncRemoteEndpoint endpoint)
+        {
+            return endpoint != null && endpoint.enabled && endpoint.port > 0 && !string.IsNullOrWhiteSpace(endpoint.ipAddress) && !string.Equals(endpoint.name, profile.nodeId, StringComparison.Ordinal);
         }
     }
 }

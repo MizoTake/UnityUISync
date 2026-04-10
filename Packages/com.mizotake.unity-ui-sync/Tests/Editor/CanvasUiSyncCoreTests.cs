@@ -104,6 +104,96 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleRequestSnapshot_SendsSnapshotToLocalPeerWithoutOscTransport()
+        {
+            var peerACanvas = new GameObject("PeerACanvas", typeof(Canvas));
+            var peerAToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            peerAToggleObject.transform.SetParent(peerACanvas.transform, false);
+            var peerAToggle = peerAToggleObject.GetComponent<Toggle>();
+            peerAToggle.SetIsOnWithoutNotify(true);
+            var peerASync = peerACanvas.AddComponent<CanvasUiSync>();
+            var peerAProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            peerAProfile.nodeId = "PeerA";
+            peerAProfile.enableOscTransport = false;
+            peerAProfile.allowedPeers.Add("PeerB");
+            peerAProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(peerASync, peerAProfile);
+            AssignCanvasIdOverride(peerASync, "DemoCanvas");
+
+            var peerBCanvas = new GameObject("PeerBCanvas", typeof(Canvas));
+            var peerBToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            peerBToggleObject.transform.SetParent(peerBCanvas.transform, false);
+            var peerBToggle = peerBToggleObject.GetComponent<Toggle>();
+            peerBToggle.SetIsOnWithoutNotify(false);
+            var peerBSync = peerBCanvas.AddComponent<CanvasUiSync>();
+            var peerBProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            peerBProfile.nodeId = "PeerB";
+            peerBProfile.enableOscTransport = false;
+            peerBProfile.allowedPeers.Add("PeerA");
+            peerBProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerA", ipAddress = "127.0.0.1", port = 9000, enabled = true });
+            AssignProfile(peerBSync, peerBProfile);
+            AssignCanvasIdOverride(peerBSync, "DemoCanvas");
+
+            InvokePrivate(peerASync, "Awake");
+            InvokePrivate(peerBSync, "Awake");
+            InvokePrivate(peerASync, "HandleRequestSnapshot", "PeerB", "DemoCanvas", "hash");
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [Test]
+        public void InitializeLocalState_RepeatedRescan_DoesNotAccumulateTransientSyncState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            new GameObject("PowerToggle0", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            InvokePrivate(sync, "Awake");
+            for (var index = 0; index < 8; index++)
+            {
+                foreach (var child in canvasObject.transform.Cast<Transform>().ToArray())
+                {
+                    Object.DestroyImmediate(child.gameObject);
+                }
+
+                new GameObject("PowerToggle" + index, typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+                InvokePrivate(sync, "ScanBindings");
+                InvokePrivate(sync, "InitializeLocalState");
+                var bindings = (IDictionary)GetPrivateField(sync, "bindings");
+                var binding = bindings.Values.Cast<object>().Single();
+                InvokePrivate(sync, "OnLocalStateChanged", binding, index % 2 == 0, false);
+            }
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposedValues")).Count, Is.EqualTo(1));
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposeTimes")).Count, Is.EqualTo(1));
+            Assert.That(((IDictionary)GetPrivateField(sync, "deferredCommits")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ScanBindings_Repeatedly_DoesNotDuplicateToggleListeners()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            for (var index = 0; index < 12; index++)
+            {
+                InvokePrivate(sync, "ScanBindings");
+                InvokePrivate(sync, "InitializeLocalState");
+            }
+
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            toggle.isOn = true;
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+        }
+
+        [Test]
         public void ApplyRemoteState_DefersContinuousCommitWhileInteracting()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -340,6 +430,56 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(sync, "TickSnapshotCleanup", 10f);
             Assert.That(activeSnapshotIds.Contains("expired"), Is.False);
             Assert.That(activeSnapshotIds.Contains("alive"), Is.True);
+        }
+
+        [Test]
+        public void TickNodeTimeout_RemovesExpiredNodesAndKeepsRecentNodes()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeTimeoutSeconds = 5f;
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "HandleHello", "PeerA", profile.protocolVersion, "OperationCanvas", "SessionA");
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB");
+            var nodes = (IDictionary)GetPrivateField(sync, "nodes");
+            nodes["PeerA"].GetType().GetProperty("LastSeenAt").SetValue(nodes["PeerA"], 1f);
+            nodes["PeerB"].GetType().GetProperty("LastSeenAt").SetValue(nodes["PeerB"], 8f);
+            InvokePrivate(sync, "TickNodeTimeout", 10f);
+            Assert.That(nodes.Contains("PeerA"), Is.False);
+            Assert.That(nodes.Contains("PeerB"), Is.True);
+        }
+
+        [Test]
+        public void InitializeLocalState_PrunesStaleCachesAfterBindingSetChanges()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sliderObject = new GameObject("MasterSlider", typeof(RectTransform), typeof(Slider));
+            sliderObject.transform.SetParent(canvasObject.transform, false);
+            sliderObject.GetComponent<Slider>().value = 0.25f;
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+            var bindings = (IDictionary)GetPrivateField(sync, "bindings");
+            var binding = bindings.Values.Cast<object>().Single();
+            binding.GetType().GetProperty("IsInteracting").SetValue(binding, true);
+            var syncId = (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
+            InvokePrivate(sync, "OnLocalStateChanged", binding, 0.5f, false);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Slider", 0.9f, 100L, "PeerB", 1);
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposedValues")).Contains(syncId), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposeTimes")).Contains(syncId), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "deferredCommits")).Contains(syncId), Is.True);
+            Object.DestroyImmediate(sliderObject);
+            InvokePrivate(sync, "ScanBindings");
+            InvokePrivate(sync, "InitializeLocalState");
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Count, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposedValues")).Contains(syncId), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(sync, "lastProposeTimes")).Contains(syncId), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(sync, "deferredCommits")).Contains(syncId), Is.False);
         }
 
         [Test]

@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
@@ -90,6 +89,63 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerB.presenter, Is.Not.Null);
             Assert.That(peerB.presenter.powerToggleCheckmark, Is.Not.Null);
             Assert.That(peerB.presenter.powerToggleCheckmark.enabled, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator Toggle_RepeatedBidirectionalSync_RemainsConsistentOverManyFrames()
+        {
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            yield return null;
+            yield return null;
+            var expected = false;
+            for (var index = 0; index < 120; index++)
+            {
+                expected = index % 2 == 0;
+                if (index % 2 == 0)
+                {
+                    peerA.toggle.isOn = expected;
+                }
+                else
+                {
+                    peerB.toggle.isOn = expected;
+                }
+
+                yield return null;
+            }
+
+            yield return null;
+            Assert.That(peerA.toggle.isOn, Is.EqualTo(expected));
+            Assert.That(peerB.toggle.isOn, Is.EqualTo(expected));
+        }
+
+        [UnityTest]
+        public IEnumerator Toggle_RepeatedEnableDisableWithRescanOnEnable_KeepsSyncStable()
+        {
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            SetPrivateField(peerA.sync, "rescanOnEnable", true);
+            SetPrivateField(peerB.sync, "rescanOnEnable", true);
+            yield return null;
+            yield return null;
+            for (var index = 0; index < 20; index++)
+            {
+                peerA.sync.gameObject.SetActive(false);
+                peerB.sync.gameObject.SetActive(false);
+                yield return null;
+                peerA.sync.gameObject.SetActive(true);
+                peerB.sync.gameObject.SetActive(true);
+                yield return null;
+            }
+
+            peerA.toggle.isOn = true;
+            yield return null;
+            yield return null;
+            Assert.That(peerB.toggle.isOn, Is.True);
+            peerB.toggle.isOn = false;
+            yield return null;
+            yield return null;
+            Assert.That(peerA.toggle.isOn, Is.False);
         }
 
         private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false)
