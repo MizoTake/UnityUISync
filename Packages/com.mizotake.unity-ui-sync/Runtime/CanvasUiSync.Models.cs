@@ -1,0 +1,399 @@
+using System;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace Mizotake.UnityUiSync
+{
+    public sealed partial class CanvasUiSync
+    {
+        private sealed class NodeState
+        {
+            public NodeState(string nodeId, string sessionId, float lastSeenAt)
+            {
+                NodeId = nodeId;
+                SessionId = sessionId;
+                LastSeenAt = lastSeenAt;
+            }
+
+            public string NodeId { get; }
+            public string SessionId { get; set; }
+            public float LastSeenAt { get; set; }
+        }
+
+        private sealed class LocalStateRecord
+        {
+            public LocalStateRecord(object value, string valueType, StateStamp stamp)
+            {
+                Value = value;
+                ValueType = valueType;
+                Stamp = stamp;
+                PendingValue = value;
+                PendingStamp = stamp;
+            }
+
+            public object Value { get; set; }
+            public string ValueType { get; }
+            public StateStamp Stamp { get; set; }
+            public float LastBroadcastAt { get; set; }
+            public float NextBroadcastAt { get; set; }
+            public bool HasPendingBroadcast { get; set; }
+            public object PendingValue { get; set; }
+            public StateStamp PendingStamp { get; set; }
+        }
+
+        private readonly struct StateStamp
+        {
+            public StateStamp(long logicalTicks, string nodeId, int sequence)
+            {
+                LogicalTicks = logicalTicks;
+                NodeId = nodeId;
+                Sequence = sequence;
+            }
+
+            public long LogicalTicks { get; }
+            public string NodeId { get; }
+            public int Sequence { get; }
+        }
+
+        private sealed class UiSyncBinding : IDisposable
+        {
+            public UiSyncBinding(Component component, string syncId, string valueType, Func<object> readValue, Action<object> applyValue, bool isContinuous)
+            {
+                Component = component;
+                SyncId = syncId;
+                ValueType = valueType;
+                this.readValue = readValue;
+                this.applyValue = applyValue;
+                IsContinuous = isContinuous;
+            }
+
+            private readonly Func<object> readValue;
+            private readonly Action<object> applyValue;
+            public Component Component { get; }
+            public string SyncId { get; }
+            public string ValueType { get; }
+            public bool IsContinuous { get; }
+            public bool IsInteracting { get; set; }
+            public Action Unsubscribe { get; set; }
+
+            public object ReadValue()
+            {
+                return readValue == null ? null : readValue();
+            }
+
+            public void ApplyValue(object value)
+            {
+                applyValue?.Invoke(value);
+            }
+
+            public void Dispose()
+            {
+                Unsubscribe?.Invoke();
+            }
+        }
+
+        private readonly struct DeferredStateCommit
+        {
+            public DeferredStateCommit(string valueType, object value, StateStamp stamp)
+            {
+                ValueType = valueType;
+                Value = value;
+                Stamp = stamp;
+            }
+
+            public string ValueType { get; }
+            public object Value { get; }
+            public StateStamp Stamp { get; }
+        }
+
+        private readonly struct SuppressionScope : IDisposable
+        {
+            private readonly CanvasUiSync owner;
+
+            public SuppressionScope(CanvasUiSync owner)
+            {
+                this.owner = owner;
+                owner.suppressionCount++;
+            }
+
+            public void Dispose()
+            {
+                owner.suppressionCount = Mathf.Max(0, owner.suppressionCount - 1);
+            }
+        }
+    }
+
+    public sealed class CanvasUiSyncSamplePresenter : MonoBehaviour
+    {
+        public Toggle powerToggle;
+        public Image powerLamp;
+        public Text powerValueText;
+        public Slider masterSlider;
+        public Image sliderFill;
+        public Text sliderValueText;
+        public Scrollbar intensityScrollbar;
+        public Image scrollbarFill;
+        public Text scrollbarValueText;
+        public Dropdown modeDropdown;
+        public Text modeValueText;
+        public InputField operatorInput;
+        public Text operatorValueText;
+        public Toggle targetToggle;
+        public Image targetLamp;
+        public Text targetValueText;
+        public Button syncButton;
+        public Image buttonPulse;
+        public Text buttonValueText;
+        private bool hasCachedState;
+        private bool lastPowerState;
+        private float lastSliderValue;
+        private float lastScrollbarValue;
+        private int lastDropdownValue = -1;
+        private string lastOperatorText = string.Empty;
+        private bool lastTargetState;
+
+        private void Awake()
+        {
+            Refresh();
+        }
+
+        private void OnEnable()
+        {
+            Bind();
+            Refresh();
+        }
+
+        private void OnDisable()
+        {
+            Unbind();
+        }
+
+        private void LateUpdate()
+        {
+            SyncStateViews();
+        }
+
+        private void Bind()
+        {
+            if (powerToggle != null)
+            {
+                powerToggle.onValueChanged.AddListener(OnPowerToggleChanged);
+            }
+
+            if (masterSlider != null)
+            {
+                masterSlider.onValueChanged.AddListener(OnMasterSliderChanged);
+            }
+
+            if (intensityScrollbar != null)
+            {
+                intensityScrollbar.onValueChanged.AddListener(OnIntensityScrollbarChanged);
+            }
+
+            if (modeDropdown != null)
+            {
+                modeDropdown.onValueChanged.AddListener(OnModeDropdownChanged);
+            }
+
+            if (operatorInput != null)
+            {
+                operatorInput.onValueChanged.AddListener(OnOperatorInputChanged);
+                operatorInput.onEndEdit.AddListener(OnOperatorInputChanged);
+            }
+
+            if (targetToggle != null)
+            {
+                targetToggle.onValueChanged.AddListener(OnTargetToggleChanged);
+            }
+
+            if (syncButton != null)
+            {
+                syncButton.onClick.AddListener(OnSyncButtonClicked);
+            }
+        }
+
+        private void Unbind()
+        {
+            if (powerToggle != null)
+            {
+                powerToggle.onValueChanged.RemoveListener(OnPowerToggleChanged);
+            }
+
+            if (masterSlider != null)
+            {
+                masterSlider.onValueChanged.RemoveListener(OnMasterSliderChanged);
+            }
+
+            if (intensityScrollbar != null)
+            {
+                intensityScrollbar.onValueChanged.RemoveListener(OnIntensityScrollbarChanged);
+            }
+
+            if (modeDropdown != null)
+            {
+                modeDropdown.onValueChanged.RemoveListener(OnModeDropdownChanged);
+            }
+
+            if (operatorInput != null)
+            {
+                operatorInput.onValueChanged.RemoveListener(OnOperatorInputChanged);
+                operatorInput.onEndEdit.RemoveListener(OnOperatorInputChanged);
+            }
+
+            if (targetToggle != null)
+            {
+                targetToggle.onValueChanged.RemoveListener(OnTargetToggleChanged);
+            }
+
+            if (syncButton != null)
+            {
+                syncButton.onClick.RemoveListener(OnSyncButtonClicked);
+            }
+        }
+
+        private void OnPowerToggleChanged(bool value)
+        {
+            ApplyLamp(powerLamp, value, new Color(0.22f, 0.78f, 0.36f), new Color(0.21f, 0.24f, 0.28f));
+            ApplyText(powerValueText, value ? "ON" : "OFF");
+        }
+
+        private void OnMasterSliderChanged(float value)
+        {
+            ApplyFill(sliderFill, value, new Color(0.15f, 0.65f, 0.95f), new Color(0.16f, 0.2f, 0.28f));
+            ApplyText(sliderValueText, value.ToString("0.00"));
+        }
+
+        private void OnIntensityScrollbarChanged(float value)
+        {
+            ApplyFill(scrollbarFill, value, new Color(1f, 0.68f, 0.2f), new Color(0.22f, 0.18f, 0.13f));
+            ApplyText(scrollbarValueText, value.ToString("0.00"));
+        }
+
+        private void OnModeDropdownChanged(int value)
+        {
+            if (modeDropdown == null)
+            {
+                return;
+            }
+
+            var label = value >= 0 && value < modeDropdown.options.Count ? modeDropdown.options[value].text : value.ToString();
+            ApplyText(modeValueText, label);
+        }
+
+        private void OnOperatorInputChanged(string value)
+        {
+            ApplyText(operatorValueText, string.IsNullOrWhiteSpace(value) ? "(empty)" : value);
+        }
+
+        private void OnTargetToggleChanged(bool value)
+        {
+            ApplyLamp(targetLamp, value, new Color(0.98f, 0.38f, 0.24f), new Color(0.24f, 0.2f, 0.2f));
+            ApplyText(targetValueText, value ? "ARMED" : "IDLE");
+        }
+
+        private void OnSyncButtonClicked()
+        {
+            if (buttonPulse != null)
+            {
+                buttonPulse.color = new Color(1f, 0.93f, 0.35f, 1f);
+            }
+
+            ApplyText(buttonValueText, "TRIGGERED");
+        }
+
+        public void Refresh()
+        {
+            hasCachedState = false;
+            SyncStateViews();
+            if (buttonPulse != null)
+            {
+                buttonPulse.color = new Color(0.33f, 0.38f, 0.46f, 1f);
+            }
+
+            ApplyText(buttonValueText, "READY");
+        }
+
+        private void SyncStateViews()
+        {
+            if (powerToggle != null)
+            {
+                if (!hasCachedState || lastPowerState != powerToggle.isOn)
+                {
+                    lastPowerState = powerToggle.isOn;
+                    OnPowerToggleChanged(powerToggle.isOn);
+                }
+            }
+
+            if (masterSlider != null)
+            {
+                if (!hasCachedState || !Mathf.Approximately(lastSliderValue, masterSlider.value))
+                {
+                    lastSliderValue = masterSlider.value;
+                    OnMasterSliderChanged(masterSlider.value);
+                }
+            }
+
+            if (intensityScrollbar != null)
+            {
+                if (!hasCachedState || !Mathf.Approximately(lastScrollbarValue, intensityScrollbar.value))
+                {
+                    lastScrollbarValue = intensityScrollbar.value;
+                    OnIntensityScrollbarChanged(intensityScrollbar.value);
+                }
+            }
+
+            if (modeDropdown != null)
+            {
+                if (!hasCachedState || lastDropdownValue != modeDropdown.value)
+                {
+                    lastDropdownValue = modeDropdown.value;
+                    OnModeDropdownChanged(modeDropdown.value);
+                }
+            }
+
+            if (operatorInput != null)
+            {
+                if (!hasCachedState || !string.Equals(lastOperatorText, operatorInput.text, StringComparison.Ordinal))
+                {
+                    lastOperatorText = operatorInput.text;
+                    OnOperatorInputChanged(operatorInput.text);
+                }
+            }
+
+            if (targetToggle != null)
+            {
+                if (!hasCachedState || lastTargetState != targetToggle.isOn)
+                {
+                    lastTargetState = targetToggle.isOn;
+                    OnTargetToggleChanged(targetToggle.isOn);
+                }
+            }
+
+            hasCachedState = true;
+        }
+
+        private static void ApplyLamp(Image image, bool isActive, Color activeColor, Color inactiveColor)
+        {
+            if (image != null)
+            {
+                image.color = isActive ? activeColor : inactiveColor;
+            }
+        }
+
+        private static void ApplyFill(Image image, float normalizedValue, Color highColor, Color lowColor)
+        {
+            if (image != null)
+            {
+                image.color = Color.Lerp(lowColor, highColor, Mathf.Clamp01(normalizedValue));
+            }
+        }
+
+        private static void ApplyText(Text text, string value)
+        {
+            if (text != null)
+            {
+                text.text = value;
+            }
+        }
+    }
+}

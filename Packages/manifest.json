@@ -1,4 +1,7 @@
 {
+  "testables": [
+    "com.mizotake.unity-ui-sync"
+  ],
   "dependencies": {
     "com.hecomi.uosc": "https://github.com/hecomi/uOSC.git#upm",
     "com.unity.collab-proxy": "2.12.4",

@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8380170101bd634da637859225eb5a9, type: 3}
+  m_Name: PeerB
+  m_EditorClassIdentifier: 
+  profileName: PeerB
+  syncMode: 0
+  nodeId: PeerB
+  protocolVersion: 4
+  helloIntervalSeconds: 1
+  nodeTimeoutSeconds: 5
+  snapshotRequestIntervalSeconds: 1.5
+  snapshotRequestRetryCount: 5
+  snapshotRetryCooldownSeconds: 5
+  snapshotStateTimeoutSeconds: 10
+  periodicFullResyncIntervalSeconds: 60
+  sliderEpsilon: 0.001
+  minimumProposeIntervalSeconds: 0.05
+  minimumCommitBroadcastIntervalSeconds: 0.05
+  stringSendMode: 0
+  enableOscTransport: 0
+  listenPort: 9001
+  allowDynamicPeerJoin: 0
+  allowedPeers:
+  - PeerA
+  peerEndpoints:
+  - name: PeerA
+    ipAddress: 127.0.0.1
+    port: 9000
+    enabled: 1
+  verboseLog: 1
+  logUnknownSyncId: 1
+  logTypeMismatch: 1
+  logDuplicateSyncId: 1
+  logRegistryHashMismatch: 1
+  enableStatisticsLog: 0
+  statisticsLogIntervalSeconds: 60

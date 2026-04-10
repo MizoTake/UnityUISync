@@ -1,0 +1,23 @@
+{
+  "name": "com.mizotake.unity-ui-sync",
+  "version": "0.1.0",
+  "displayName": "Unity UI Sync",
+  "description": "Canvas unit UI synchronization for Unity UI and TMP UI over OSC.",
+  "unity": "2022.3",
+  "author": {
+    "name": "mizotake"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Setup",
+      "description": "PeerA/PeerB profiles and a sample scene for CanvasUiSync.",
+      "path": "Samples~/Basic Setup"
+    }
+  ],
+  "dependencies": {
+    "com.hecomi.uosc": "1.0.0",
+    "com.unity.textmeshpro": "3.0.6",
+    "com.unity.ugui": "1.0.0"
+  },
+  "documentationUrl": "https://github.com/hecomi/uOSC"
+}

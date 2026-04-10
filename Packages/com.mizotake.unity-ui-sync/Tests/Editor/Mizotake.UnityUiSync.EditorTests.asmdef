@@ -1,0 +1,23 @@
+{
+  "name": "Mizotake.UnityUiSync.EditorTests",
+  "rootNamespace": "Mizotake.UnityUiSync.Tests.Editor",
+  "references": [
+    "Mizotake.UnityUiSync.Runtime",
+    "Mizotake.UnityUiSync.Editor",
+    "uOSC.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}
