@@ -99,7 +99,7 @@ namespace Mizotake.UnityUiSync.Editor
 
         private static void BuildReadme(string readmePath)
         {
-            File.WriteAllText(readmePath, "1. 左右に 2 つのデモ画面が並びます。\n2. 各列は ラベル / コントロール / 状態表示 の 3 列で整理されています。\n3. 縦に収まりきらないときは各パネルをスクロールできます。\n4. Toggle はランプと ON/OFF、Slider と Scrollbar は数値、Dropdown と InputField は内容、Button は READY/TRIGGERED が反映されます。\n");
+            File.WriteAllText(readmePath, "1. 左右に 2 つのデモ画面が並びます。\n2. 各列は ラベル / コントロール / 状態表示 の 3 列で整理されています。\n3. すべてのデモ要素は 1 画面に収まるように配置してあります。\n4. Toggle はランプと ON/OFF、Slider と Scrollbar は数値、Dropdown と InputField は内容、Button は READY/TRIGGERED が反映されます。\n");
             AssetDatabase.ImportAsset(readmePath);
         }
 
@@ -193,19 +193,22 @@ namespace Mizotake.UnityUiSync.Editor
         {
             var resources = new DefaultControls.Resources();
             var root = CreatePanel(canvasTransform, anchorMinX, anchorMaxX);
-            var scrollRect = CreateScrollView(root.transform);
-            var content = scrollRect.content;
+            var content = CreateContentRoot(root.transform);
             var presenter = root.AddComponent<Mizotake.UnityUiSync.CanvasUiSyncSamplePresenter>();
-
-            CreateText(content, "HeaderText", "Unity UI Sync " + peerName, 28, FontStyle.Bold, Color.white, 40f);
-            CreateText(content, "HintText", hintText, 16, FontStyle.Normal, new Color(0.82f, 0.86f, 0.92f), 28f);
+            var top = 0f;
+            PositionContentBlock((RectTransform)CreateText(content, "HeaderText", "Unity UI Sync " + peerName, 28, FontStyle.Bold, Color.white, 40f).transform, ref top, 40f, 8f);
+            PositionContentBlock((RectTransform)CreateText(content, "HintText", hintText, 16, FontStyle.Normal, new Color(0.82f, 0.86f, 0.92f), 28f).transform, ref top, 28f, 12f);
 
             presenter.powerToggle = CreateToggleRow(content, resources, "PowerToggle", "Power", "OFF", out presenter.powerLamp, out presenter.powerValueText);
+            PositionContentBlock((RectTransform)presenter.powerToggle.transform.parent, ref top, 68f, 12f);
             presenter.masterSlider = CreateSliderRow(content, resources, "MasterSlider", "Master", "0.25", out presenter.sliderFill, out presenter.sliderValueText);
+            PositionContentBlock((RectTransform)presenter.masterSlider.transform.parent, ref top, 68f, 12f);
             presenter.masterSlider.SetValueWithoutNotify(0.25f);
             presenter.intensityScrollbar = CreateScrollbarRow(content, resources, "IntensityScrollbar", "Intensity", "0.75", out presenter.scrollbarFill, out presenter.scrollbarValueText);
+            PositionContentBlock((RectTransform)presenter.intensityScrollbar.transform.parent, ref top, 68f, 12f);
             presenter.intensityScrollbar.SetValueWithoutNotify(0.75f);
             presenter.modeDropdown = CreateDropdownRow(content, resources, "ModeDropdown", "Mode", "Live", out presenter.modeValueText);
+            PositionContentBlock((RectTransform)presenter.modeDropdown.transform.parent, ref top, 68f, 12f);
             presenter.modeDropdown.options.Clear();
             presenter.modeDropdown.options.Add(new Dropdown.OptionData("Idle"));
             presenter.modeDropdown.options.Add(new Dropdown.OptionData("Live"));
@@ -213,10 +216,14 @@ namespace Mizotake.UnityUiSync.Editor
             presenter.modeDropdown.SetValueWithoutNotify(1);
             presenter.modeDropdown.RefreshShownValue();
             presenter.operatorInput = CreateInputFieldRow(content, resources, "OperatorInput", "Operator", "Sample operator", out presenter.operatorValueText);
+            PositionContentBlock((RectTransform)presenter.operatorInput.transform.parent, ref top, 68f, 12f);
             presenter.targetToggle = CreateToggleRow(content, resources, "TargetToggle", "Target", "IDLE", out presenter.targetLamp, out presenter.targetValueText);
+            PositionContentBlock((RectTransform)presenter.targetToggle.transform.parent, ref top, 68f, 12f);
             presenter.targetToggle.SetIsOnWithoutNotify(false);
             presenter.syncButton = CreateButtonRow(content, resources, "SyncButton", "Sync Button", "READY", out presenter.buttonPulse, out presenter.buttonValueText);
+            PositionContentBlock((RectTransform)presenter.syncButton.transform.parent, ref top, 68f, 0f);
             UnityEventTools.AddBoolPersistentListener(presenter.syncButton.onClick, presenter.targetToggle.SetIsOnWithoutNotify, true);
+            content.sizeDelta = new Vector2(0f, top + 16f);
             presenter.Refresh();
         }
 
@@ -233,73 +240,27 @@ namespace Mizotake.UnityUiSync.Editor
             return panel;
         }
 
-        private static ScrollRect CreateScrollView(Transform parent)
+        private static RectTransform CreateContentRoot(Transform parent)
         {
-            var scrollRoot = new GameObject("ScrollView", typeof(RectTransform), typeof(Image), typeof(Mask), typeof(ScrollRect));
-            scrollRoot.transform.SetParent(parent, false);
-            var scrollRectTransform = (RectTransform)scrollRoot.transform;
-            scrollRectTransform.anchorMin = new Vector2(0f, 0f);
-            scrollRectTransform.anchorMax = new Vector2(1f, 1f);
-            scrollRectTransform.offsetMin = new Vector2(18f, 18f);
-            scrollRectTransform.offsetMax = new Vector2(-18f, -18f);
-            scrollRoot.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
-            scrollRoot.GetComponent<Mask>().showMaskGraphic = false;
-
-            var viewport = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(Mask));
-            viewport.transform.SetParent(scrollRoot.transform, false);
-            var viewportRect = (RectTransform)viewport.transform;
-            viewportRect.anchorMin = new Vector2(0f, 0f);
-            viewportRect.anchorMax = new Vector2(1f, 1f);
-            viewportRect.offsetMin = Vector2.zero;
-            viewportRect.offsetMax = Vector2.zero;
-            viewport.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
-            viewport.GetComponent<Mask>().showMaskGraphic = false;
-
-            var content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-            content.transform.SetParent(viewport.transform, false);
-            var contentRect = (RectTransform)content.transform;
+            var contentObject = new GameObject("Content", typeof(RectTransform));
+            contentObject.transform.SetParent(parent, false);
+            var contentRect = (RectTransform)contentObject.transform;
             contentRect.anchorMin = new Vector2(0f, 1f);
             contentRect.anchorMax = new Vector2(1f, 1f);
             contentRect.pivot = new Vector2(0.5f, 1f);
-            contentRect.offsetMin = Vector2.zero;
-            contentRect.offsetMax = Vector2.zero;
-            var layout = content.GetComponent<VerticalLayoutGroup>();
-            layout.spacing = 12f;
-            layout.padding = new RectOffset(0, 0, 0, 0);
-            layout.childAlignment = TextAnchor.UpperLeft;
-            layout.childControlWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandWidth = true;
-            layout.childForceExpandHeight = false;
-            content.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            var scrollbar = CreateVerticalScrollbar(scrollRoot.transform, viewportRect);
-            var scrollRect = scrollRoot.GetComponent<ScrollRect>();
-            scrollRect.viewport = viewportRect;
-            scrollRect.content = contentRect;
-            scrollRect.horizontal = false;
-            scrollRect.vertical = true;
-            scrollRect.scrollSensitivity = 24f;
-            scrollRect.verticalScrollbar = scrollbar;
-            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
-            return scrollRect;
+            contentRect.offsetMin = new Vector2(18f, -620f);
+            contentRect.offsetMax = new Vector2(-18f, -18f);
+            return contentRect;
         }
 
-        private static Scrollbar CreateVerticalScrollbar(Transform parent, RectTransform viewport)
+        private static void PositionContentBlock(RectTransform rect, ref float top, float height, float spacing)
         {
-            var scrollbarObject = DefaultControls.CreateScrollbar(new DefaultControls.Resources());
-            scrollbarObject.name = "VerticalScrollbar";
-            scrollbarObject.transform.SetParent(parent, false);
-            var rect = (RectTransform)scrollbarObject.transform;
-            rect.anchorMin = new Vector2(1f, 0f);
+            rect.anchorMin = new Vector2(0f, 1f);
             rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(1f, 1f);
-            rect.sizeDelta = new Vector2(18f, 0f);
-            rect.anchoredPosition = Vector2.zero;
-            viewport.offsetMax = new Vector2(-24f, 0f);
-            var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
-            scrollbar.direction = Scrollbar.Direction.BottomToTop;
-            return scrollbar;
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.offsetMin = new Vector2(0f, -(top + height));
+            rect.offsetMax = new Vector2(0f, -top);
+            top += height + spacing;
         }
 
         private static Text CreateText(Transform parent, string objectName, string text, int fontSize, FontStyle fontStyle, Color color, float height)
