@@ -199,7 +199,7 @@ namespace Mizotake.UnityUiSync.Editor
             PositionContentBlock((RectTransform)CreateText(content, "HeaderText", "Unity UI Sync " + peerName, 28, FontStyle.Bold, Color.white, 40f).transform, ref top, 40f, 8f);
             PositionContentBlock((RectTransform)CreateText(content, "HintText", hintText, 16, FontStyle.Normal, new Color(0.82f, 0.86f, 0.92f), 28f).transform, ref top, 28f, 12f);
 
-            presenter.powerToggle = CreateToggleRow(content, resources, "PowerToggle", "Power", "OFF", out presenter.powerLamp, out presenter.powerValueText);
+            presenter.powerToggle = CreateToggleRow(content, resources, "PowerToggle", "Power", "OFF", out presenter.powerLamp, out presenter.powerValueText, out presenter.powerToggleBackground, out presenter.powerToggleCheckmark);
             PositionContentBlock((RectTransform)presenter.powerToggle.transform.parent, ref top, 68f, 12f);
             presenter.masterSlider = CreateSliderRow(content, resources, "MasterSlider", "Master", "0.25", out presenter.sliderFill, out presenter.sliderValueText);
             PositionContentBlock((RectTransform)presenter.masterSlider.transform.parent, ref top, 68f, 12f);
@@ -217,7 +217,7 @@ namespace Mizotake.UnityUiSync.Editor
             presenter.modeDropdown.RefreshShownValue();
             presenter.operatorInput = CreateInputFieldRow(content, resources, "OperatorInput", "Operator", "Sample operator", out presenter.operatorValueText);
             PositionContentBlock((RectTransform)presenter.operatorInput.transform.parent, ref top, 68f, 12f);
-            presenter.targetToggle = CreateToggleRow(content, resources, "TargetToggle", "Target", "IDLE", out presenter.targetLamp, out presenter.targetValueText);
+            presenter.targetToggle = CreateToggleRow(content, resources, "TargetToggle", "Target", "IDLE", out presenter.targetLamp, out presenter.targetValueText, out presenter.targetToggleBackground, out presenter.targetToggleCheckmark);
             PositionContentBlock((RectTransform)presenter.targetToggle.transform.parent, ref top, 68f, 12f);
             presenter.targetToggle.SetIsOnWithoutNotify(false);
             presenter.syncButton = CreateButtonRow(content, resources, "SyncButton", "Sync Button", "READY", out presenter.buttonPulse, out presenter.buttonValueText);
@@ -297,7 +297,7 @@ namespace Mizotake.UnityUiSync.Editor
             return row;
         }
 
-        private static Toggle CreateToggleRow(Transform parent, DefaultControls.Resources resources, string controlName, string labelText, string initialValue, out Image lamp, out Text valueText)
+        private static Toggle CreateToggleRow(Transform parent, DefaultControls.Resources resources, string controlName, string labelText, string initialValue, out Image lamp, out Text valueText, out Image toggleBackground, out Image toggleCheckmark)
         {
             var row = CreateRowRoot(parent, controlName + "Row");
             lamp = CreateBadge(row.transform, controlName + "Lamp", new Color(0.21f, 0.24f, 0.28f));
@@ -308,6 +308,9 @@ namespace Mizotake.UnityUiSync.Editor
             ConfigureControlWidth(toggleObject, 96f, 34f);
             toggleObject.GetComponentInChildren<Text>().text = string.Empty;
             var toggle = toggleObject.GetComponent<Toggle>();
+            toggleBackground = toggle.targetGraphic as Image;
+            toggleCheckmark = toggle.graphic as Image;
+            ConfigureToggleVisual(toggleObject, toggleBackground, toggleCheckmark);
             toggle.SetIsOnWithoutNotify(false);
             valueText = CreateValueText(row.transform, controlName + "ValueText", initialValue);
             return toggle;
@@ -438,6 +441,38 @@ namespace Mizotake.UnityUiSync.Editor
             layout.minWidth = width;
             layout.preferredHeight = height;
             layout.minHeight = height;
+        }
+
+        private static void ConfigureToggleVisual(GameObject toggleObject, Image background, Image checkmark)
+        {
+            var backgroundRect = background != null ? background.rectTransform : null;
+            if (backgroundRect != null)
+            {
+                backgroundRect.anchorMin = new Vector2(0f, 0.5f);
+                backgroundRect.anchorMax = new Vector2(0f, 0.5f);
+                backgroundRect.pivot = new Vector2(0f, 0.5f);
+                backgroundRect.sizeDelta = new Vector2(28f, 28f);
+                backgroundRect.anchoredPosition = new Vector2(0f, 0f);
+                background.color = new Color(0.17f, 0.2f, 0.24f, 1f);
+            }
+
+            var checkRect = checkmark != null ? checkmark.rectTransform : null;
+            if (checkRect != null)
+            {
+                checkRect.anchorMin = new Vector2(0.5f, 0.5f);
+                checkRect.anchorMax = new Vector2(0.5f, 0.5f);
+                checkRect.pivot = new Vector2(0.5f, 0.5f);
+                checkRect.sizeDelta = new Vector2(18f, 18f);
+                checkRect.anchoredPosition = Vector2.zero;
+                checkmark.color = new Color(1f, 1f, 1f, 0f);
+                checkmark.enabled = false;
+            }
+
+            var text = toggleObject.GetComponentInChildren<Text>();
+            if (text != null)
+            {
+                Object.DestroyImmediate(text.gameObject);
+            }
         }
     }
 }

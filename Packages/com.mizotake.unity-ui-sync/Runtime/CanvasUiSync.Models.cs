@@ -126,6 +126,8 @@ namespace Mizotake.UnityUiSync
     public sealed class CanvasUiSyncSamplePresenter : MonoBehaviour
     {
         public Toggle powerToggle;
+        public Image powerToggleBackground;
+        public Image powerToggleCheckmark;
         public Image powerLamp;
         public Text powerValueText;
         public Slider masterSlider;
@@ -139,6 +141,8 @@ namespace Mizotake.UnityUiSync
         public InputField operatorInput;
         public Text operatorValueText;
         public Toggle targetToggle;
+        public Image targetToggleBackground;
+        public Image targetToggleCheckmark;
         public Image targetLamp;
         public Text targetValueText;
         public Button syncButton;
@@ -253,6 +257,7 @@ namespace Mizotake.UnityUiSync
 
         private void OnPowerToggleChanged(bool value)
         {
+            ApplyToggleVisual(powerToggleBackground, powerToggleCheckmark, value, new Color(0.22f, 0.78f, 0.36f), new Color(0.17f, 0.2f, 0.24f));
             ApplyLamp(powerLamp, value, new Color(0.22f, 0.78f, 0.36f), new Color(0.21f, 0.24f, 0.28f));
             ApplyText(powerValueText, value ? "ON" : "OFF");
         }
@@ -287,6 +292,7 @@ namespace Mizotake.UnityUiSync
 
         private void OnTargetToggleChanged(bool value)
         {
+            ApplyToggleVisual(targetToggleBackground, targetToggleCheckmark, value, new Color(0.98f, 0.38f, 0.24f), new Color(0.24f, 0.2f, 0.2f));
             ApplyLamp(targetLamp, value, new Color(0.98f, 0.38f, 0.24f), new Color(0.24f, 0.2f, 0.2f));
             ApplyText(targetValueText, value ? "ARMED" : "IDLE");
         }
@@ -377,6 +383,20 @@ namespace Mizotake.UnityUiSync
             if (image != null)
             {
                 image.color = isActive ? activeColor : inactiveColor;
+            }
+        }
+
+        private static void ApplyToggleVisual(Image background, Image checkmark, bool isActive, Color activeColor, Color inactiveColor)
+        {
+            if (background != null)
+            {
+                background.color = isActive ? new Color(activeColor.r, activeColor.g, activeColor.b, 0.32f) : inactiveColor;
+            }
+
+            if (checkmark != null)
+            {
+                checkmark.enabled = isActive;
+                checkmark.color = isActive ? activeColor : new Color(1f, 1f, 1f, 0f);
             }
         }
 

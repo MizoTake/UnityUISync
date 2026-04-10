@@ -74,6 +74,24 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerB.presenter.powerValueText.text, Is.EqualTo("ON"));
         }
 
+        [UnityTest]
+        public IEnumerator Toggle_RemoteSync_UpdatesSamplePresenterCheckmark()
+        {
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000, true);
+            yield return null;
+            yield return null;
+
+            peerA.toggle.isOn = true;
+            yield return null;
+            yield return null;
+
+            Assert.That(peerB.toggle.isOn, Is.True);
+            Assert.That(peerB.presenter, Is.Not.Null);
+            Assert.That(peerB.presenter.powerToggleCheckmark, Is.Not.Null);
+            Assert.That(peerB.presenter.powerToggleCheckmark.enabled, Is.True);
+        }
+
         private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false)
         {
             var canvasObject = new GameObject(canvasName, typeof(Canvas), typeof(GraphicRaycaster));
@@ -93,6 +111,10 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 presenter.powerValueText.transform.SetParent(presenterObject.transform, false);
                 presenter.powerLamp = new GameObject("PowerLamp", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
                 presenter.powerLamp.transform.SetParent(presenterObject.transform, false);
+                presenter.powerToggleBackground = new GameObject("PowerToggleBackground", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+                presenter.powerToggleBackground.transform.SetParent(presenterObject.transform, false);
+                presenter.powerToggleCheckmark = new GameObject("PowerToggleCheckmark", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+                presenter.powerToggleCheckmark.transform.SetParent(presenterObject.transform, false);
             }
 
             var sync = canvasObject.AddComponent<CanvasUiSync>();
