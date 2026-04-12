@@ -13,7 +13,6 @@ MonoBehaviour:
   m_Name: PeerB
   m_EditorClassIdentifier: 
   profileName: PeerB
-  syncMode: 0
   nodeId: PeerB
   protocolVersion: 4
   helloIntervalSeconds: 1

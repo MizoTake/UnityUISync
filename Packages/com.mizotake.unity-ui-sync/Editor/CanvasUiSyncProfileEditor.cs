@@ -7,7 +7,6 @@ namespace Mizotake.UnityUiSync.Editor
     public sealed class CanvasUiSyncProfileEditor : UnityEditor.Editor
     {
         private SerializedProperty profileNameProperty;
-        private SerializedProperty syncModeProperty;
         private SerializedProperty nodeIdProperty;
         private SerializedProperty protocolVersionProperty;
         private SerializedProperty enableOscTransportProperty;
@@ -37,7 +36,6 @@ namespace Mizotake.UnityUiSync.Editor
         private void OnEnable()
         {
             profileNameProperty = serializedObject.FindProperty("profileName");
-            syncModeProperty = serializedObject.FindProperty("syncMode");
             nodeIdProperty = serializedObject.FindProperty("nodeId");
             protocolVersionProperty = serializedObject.FindProperty("protocolVersion");
             enableOscTransportProperty = serializedObject.FindProperty("enableOscTransport");
@@ -72,7 +70,6 @@ namespace Mizotake.UnityUiSync.Editor
 
             DrawSectionHeader("基本設定", "全 peer で共有する識別情報です。");
             EditorGUILayout.PropertyField(profileNameProperty, new GUIContent("プロファイル名"));
-            EditorGUILayout.PropertyField(syncModeProperty, new GUIContent("同期モード", "現状は PeerToPeer 固定です。"));
             EditorGUILayout.PropertyField(nodeIdProperty, new GUIContent("ノード ID", "この端末を識別する一意名です。"));
             EditorGUILayout.PropertyField(protocolVersionProperty, new GUIContent("プロトコル バージョン"));
 

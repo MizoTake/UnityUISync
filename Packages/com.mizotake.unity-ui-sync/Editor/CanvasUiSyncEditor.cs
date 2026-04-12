@@ -33,7 +33,7 @@ namespace Mizotake.UnityUiSync.Editor
             }
             else
             {
-                EditorGUILayout.HelpBox("現在の Profile: " + profile.profileName + " / " + profile.syncMode + " / nodeId=" + profile.nodeId, MessageType.None);
+                EditorGUILayout.HelpBox("現在の Profile: " + profile.profileName + " / nodeId=" + profile.nodeId, MessageType.None);
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     if (GUILayout.Button("Profile を選択"))

@@ -142,6 +142,32 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleHello_DoesNotRegisterUnauthorizedPeer()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerA");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "HandleHello", "Intruder", profile.protocolVersion, "OperationCanvas", "SessionX");
+            Assert.That(((IDictionary)GetPrivateField(sync, "nodes")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void HandleBeginSnapshot_DoesNotTrackUnauthorizedPeer()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerA");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "Intruder", "SessionX");
+            Assert.That(((IDictionary)GetPrivateField(sync, "activeSnapshotIds")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
         public void InitializeLocalState_RepeatedRescan_DoesNotAccumulateTransientSyncState()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -342,7 +368,6 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var peerB = AssetDatabase.LoadAssetAtPath<CanvasUiSyncProfile>(AssetProfileDirectoryPath + "/PeerB.asset");
             Assert.That(peerA, Is.Not.Null);
             Assert.That(peerB, Is.Not.Null);
-            Assert.That(peerA.syncMode, Is.EqualTo(CanvasUiSyncSyncMode.PeerToPeer));
             Assert.That(peerA.nodeId, Is.EqualTo("PeerA"));
             Assert.That(peerA.enableOscTransport, Is.False);
             Assert.That(peerA.listenPort, Is.EqualTo(9000));
@@ -350,7 +375,6 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(peerA.peerEndpoints.Count, Is.EqualTo(1));
             Assert.That(peerA.peerEndpoints[0].name, Is.EqualTo("PeerB"));
             Assert.That(peerA.peerEndpoints[0].port, Is.EqualTo(9001));
-            Assert.That(peerB.syncMode, Is.EqualTo(CanvasUiSyncSyncMode.PeerToPeer));
             Assert.That(peerB.nodeId, Is.EqualTo("PeerB"));
             Assert.That(peerB.enableOscTransport, Is.False);
             Assert.That(peerB.listenPort, Is.EqualTo(9001));

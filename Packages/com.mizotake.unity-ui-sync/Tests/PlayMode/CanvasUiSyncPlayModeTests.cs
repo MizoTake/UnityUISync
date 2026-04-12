@@ -1,7 +1,9 @@
 using System.Collections;
+using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using UnityEngine.UI;
 
@@ -9,6 +11,8 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
 {
     public sealed class CanvasUiSyncPlayModeTests
     {
+        private const string SampleScenePath = "Assets/Scenes/UnityUiSyncSample.unity";
+
         [UnitySetUp]
         public IEnumerator UnitySetUp()
         {
@@ -18,6 +22,80 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             }
 
             yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator SampleScene_ToggleSyncsAndPresenterReflectsRemoteState()
+        {
+            yield return LoadSampleScene();
+            var peerAPowerToggle = FindControl<Toggle>("PeerACanvas", "PowerToggle");
+            var peerBPowerToggle = FindControl<Toggle>("PeerBCanvas", "PowerToggle");
+            var peerBPresenter = FindPresenter("PeerBCanvas");
+            Assert.That(peerAPowerToggle, Is.Not.Null);
+            Assert.That(peerBPowerToggle, Is.Not.Null);
+            Assert.That(peerBPresenter, Is.Not.Null);
+
+            peerAPowerToggle.isOn = true;
+            yield return WaitFrames(2);
+
+            Assert.That(peerBPowerToggle.isOn, Is.True);
+            Assert.That(peerBPresenter.powerValueText.text, Is.EqualTo("ON"));
+            Assert.That(peerBPresenter.powerToggleCheckmark.enabled, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator SampleScene_FormControlsAndButtonRemainOperationalAcrossPeers()
+        {
+            yield return LoadSampleScene();
+            var peerAMasterSlider = FindControl<Slider>("PeerACanvas", "MasterSlider");
+            var peerBMasterSlider = FindControl<Slider>("PeerBCanvas", "MasterSlider");
+            var peerAIntensityScrollbar = FindControl<Scrollbar>("PeerACanvas", "IntensityScrollbar");
+            var peerBIntensityScrollbar = FindControl<Scrollbar>("PeerBCanvas", "IntensityScrollbar");
+            var peerAModeDropdown = FindControl<Dropdown>("PeerACanvas", "ModeDropdown");
+            var peerBModeDropdown = FindControl<Dropdown>("PeerBCanvas", "ModeDropdown");
+            var peerAOperatorInput = FindControl<InputField>("PeerACanvas", "OperatorInput");
+            var peerBOperatorInput = FindControl<InputField>("PeerBCanvas", "OperatorInput");
+            var peerASyncButton = FindControl<Button>("PeerACanvas", "SyncButton");
+            var peerBTargetToggle = FindControl<Toggle>("PeerBCanvas", "TargetToggle");
+            var peerBPresenter = FindPresenter("PeerBCanvas");
+            Assert.That(peerAMasterSlider, Is.Not.Null);
+            Assert.That(peerBMasterSlider, Is.Not.Null);
+            Assert.That(peerAIntensityScrollbar, Is.Not.Null);
+            Assert.That(peerBIntensityScrollbar, Is.Not.Null);
+            Assert.That(peerAModeDropdown, Is.Not.Null);
+            Assert.That(peerBModeDropdown, Is.Not.Null);
+            Assert.That(peerAOperatorInput, Is.Not.Null);
+            Assert.That(peerBOperatorInput, Is.Not.Null);
+            Assert.That(peerASyncButton, Is.Not.Null);
+            Assert.That(peerBTargetToggle, Is.Not.Null);
+            Assert.That(peerBPresenter, Is.Not.Null);
+
+            peerAMasterSlider.value = 0.9f;
+            yield return WaitFrames(2);
+            Assert.That(peerBMasterSlider.value, Is.EqualTo(0.9f).Within(0.0001f));
+            Assert.That(peerBPresenter.sliderValueText.text, Is.EqualTo("0.90"));
+
+            peerAIntensityScrollbar.value = 0.15f;
+            yield return WaitFrames(2);
+            Assert.That(peerBIntensityScrollbar.value, Is.EqualTo(0.15f).Within(0.0001f));
+            Assert.That(peerBPresenter.scrollbarValueText.text, Is.EqualTo("0.15"));
+
+            peerAModeDropdown.value = 2;
+            yield return WaitFrames(2);
+            Assert.That(peerBModeDropdown.value, Is.EqualTo(2));
+            Assert.That(peerBPresenter.modeValueText.text, Is.EqualTo("Bypass"));
+
+            peerAOperatorInput.text = "Operator Z";
+            peerAOperatorInput.onEndEdit.Invoke("Operator Z");
+            yield return WaitFrames(2);
+            Assert.That(peerBOperatorInput.text, Is.EqualTo("Operator Z"));
+            Assert.That(peerBPresenter.operatorValueText.text, Is.EqualTo("Operator Z"));
+
+            peerASyncButton.onClick.Invoke();
+            yield return WaitFrames(2);
+            Assert.That(peerBTargetToggle.isOn, Is.True);
+            Assert.That(peerBPresenter.buttonValueText.text, Is.EqualTo("TRIGGERED"));
+            Assert.That(peerBPresenter.targetValueText.text, Is.EqualTo("ARMED"));
         }
 
         [UnityTest]
@@ -192,6 +270,30 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, $"field {fieldName} was not found");
             field.SetValue(instance, value);
+        }
+
+        private static IEnumerator LoadSampleScene()
+        {
+            SceneManager.LoadScene(SampleScenePath, LoadSceneMode.Single);
+            yield return WaitFrames(3);
+        }
+
+        private static IEnumerator WaitFrames(int frameCount)
+        {
+            for (var index = 0; index < frameCount; index++)
+            {
+                yield return null;
+            }
+        }
+
+        private static T FindControl<T>(string canvasName, string controlName) where T : Component
+        {
+            return Object.FindObjectsOfType<T>(true).FirstOrDefault(component => component.name == controlName && component.GetComponentsInParent<Canvas>(true).Any(canvas => canvas.name == canvasName));
+        }
+
+        private static CanvasUiSyncSamplePresenter FindPresenter(string canvasName)
+        {
+            return Object.FindObjectsOfType<CanvasUiSyncSamplePresenter>(true).FirstOrDefault(component => component.GetComponentsInParent<Canvas>(true).Any(canvas => canvas.name == canvasName));
         }
     }
 }

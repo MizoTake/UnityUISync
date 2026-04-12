@@ -7,7 +7,6 @@ namespace Mizotake.UnityUiSync
     public sealed class CanvasUiSyncProfile : ScriptableObject
     {
         public string profileName = "Default";
-        public CanvasUiSyncSyncMode syncMode = CanvasUiSyncSyncMode.PeerToPeer;
         public string nodeId = "Node";
         public int protocolVersion = 1;
         public float helloIntervalSeconds = 1f;
