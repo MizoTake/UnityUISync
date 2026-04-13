@@ -137,7 +137,7 @@ namespace Mizotake.UnityUiSync
 
         private void ApplyRemoteState(string syncId, string valueType, object value, StateStamp stamp, bool isSnapshot)
         {
-            if (!bindings.TryGetValue(syncId, out var binding))
+            if (!bindings.TryGetValue(syncId, out var binding) && (!TryRefreshBindingsForSyncId(syncId) || !bindings.TryGetValue(syncId, out binding)))
             {
                 HandleUnknownSyncId(syncId);
                 return;

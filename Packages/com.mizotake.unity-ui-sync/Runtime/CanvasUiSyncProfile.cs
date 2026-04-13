@@ -57,6 +57,7 @@ namespace Mizotake.UnityUiSync
             minimumProposeIntervalSeconds = Mathf.Max(0f, minimumProposeIntervalSeconds);
             minimumCommitBroadcastIntervalSeconds = Mathf.Max(0f, minimumCommitBroadcastIntervalSeconds);
             statisticsLogIntervalSeconds = Mathf.Max(1f, statisticsLogIntervalSeconds);
+            enableOscTransport = true;
             listenPort = Mathf.Clamp(listenPort, 1, 65535);
             if (peerEndpoints == null)
             {

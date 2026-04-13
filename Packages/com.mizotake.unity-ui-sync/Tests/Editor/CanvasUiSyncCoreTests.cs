@@ -25,6 +25,12 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         }
 
+        [TearDown]
+        public void TearDown()
+        {
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        }
+
         [Test]
         public void RegistryHash_IsCreatedFromScannedBindings()
         {
@@ -104,31 +110,66 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
-        public void HandleRequestSnapshot_SendsSnapshotToLocalPeerWithoutOscTransport()
+        public void Awake_InitializesOscTransport_EvenWhenProfileDisablesOscTransport()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.enableOscTransport = false;
+            profile.listenPort = 9012;
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var server = (uOscServer)GetPrivateField(sync, "server");
+            var client = (uOscClient)GetPrivateField(sync, "client");
+            Assert.That(server, Is.Not.Null);
+            Assert.That(client, Is.Not.Null);
+            Assert.That(server.port, Is.EqualTo(9012));
+            Assert.That(client.address, Is.EqualTo("127.0.0.1"));
+            Assert.That(client.port, Is.EqualTo(9012));
+        }
+
+        [Test]
+        public void Awake_AttachesMissingTransportComponentsToDedicatedTransportHost()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.listenPort = 9013;
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var server = (uOscServer)GetPrivateField(sync, "server");
+            var client = (uOscClient)GetPrivateField(sync, "client");
+            Assert.That(canvasObject.GetComponent<uOscServer>(), Is.Null);
+            Assert.That(canvasObject.GetComponent<uOscClient>(), Is.Null);
+            Assert.That(server, Is.Not.Null);
+            Assert.That(client, Is.Not.Null);
+            Assert.That(server.gameObject, Is.SameAs(client.gameObject));
+            Assert.That(server.gameObject.name, Is.EqualTo("__CanvasUiSyncTransport"));
+            Assert.That(server.transform.parent, Is.EqualTo(canvasObject.transform));
+        }
+
+        [Test]
+        public void HandleRequestSnapshot_UsesOscEndpointEvenWhenPeerIsLocal()
         {
             var peerACanvas = new GameObject("PeerACanvas", typeof(Canvas));
-            var peerAToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
-            peerAToggleObject.transform.SetParent(peerACanvas.transform, false);
-            var peerAToggle = peerAToggleObject.GetComponent<Toggle>();
-            peerAToggle.SetIsOnWithoutNotify(true);
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(peerACanvas.transform, false);
             var peerASync = peerACanvas.AddComponent<CanvasUiSync>();
             var peerAProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
             peerAProfile.nodeId = "PeerA";
             peerAProfile.enableOscTransport = false;
+            peerAProfile.listenPort = 9000;
             peerAProfile.allowedPeers.Add("PeerB");
             peerAProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
             AssignProfile(peerASync, peerAProfile);
             AssignCanvasIdOverride(peerASync, "DemoCanvas");
 
             var peerBCanvas = new GameObject("PeerBCanvas", typeof(Canvas));
-            var peerBToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
-            peerBToggleObject.transform.SetParent(peerBCanvas.transform, false);
-            var peerBToggle = peerBToggleObject.GetComponent<Toggle>();
-            peerBToggle.SetIsOnWithoutNotify(false);
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(peerBCanvas.transform, false);
             var peerBSync = peerBCanvas.AddComponent<CanvasUiSync>();
             var peerBProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
             peerBProfile.nodeId = "PeerB";
             peerBProfile.enableOscTransport = false;
+            peerBProfile.listenPort = 9001;
             peerBProfile.allowedPeers.Add("PeerA");
             peerBProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerA", ipAddress = "127.0.0.1", port = 9000, enabled = true });
             AssignProfile(peerBSync, peerBProfile);
@@ -138,7 +179,40 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(peerBSync, "Awake");
             InvokePrivate(peerASync, "HandleRequestSnapshot", "PeerB", "DemoCanvas", "hash");
 
-            Assert.That(peerBToggle.isOn, Is.True);
+            var client = (uOscClient)GetPrivateField(peerASync, "client");
+            Assert.That(client.address, Is.EqualTo("127.0.0.1"));
+            Assert.That(client.port, Is.EqualTo(9001));
+        }
+
+        [Test]
+        public void HandleCommitState_AfterRuntimeGeneratedToggle_RescansAndAppliesRemoteState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var toggleObject = new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", toggleObject.transform, "Toggle");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Toggle", true, 100L, "PeerB", 1);
+
+            Assert.That(toggle.isOn, Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
+        }
+
+        [Test]
+        public void SerializeLogicalTicks_ReturnsOscSerializableString()
+        {
+            var method = typeof(CanvasUiSync).GetMethod("SerializeLogicalTicks", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            var result = method.Invoke(null, new object[] { 1234567890123L });
+            Assert.That(result, Is.TypeOf<string>());
+            Assert.That((string)result, Is.EqualTo("1234567890123"));
         }
 
         [Test]
@@ -360,7 +434,6 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             AssertButtonTargetsLocalToggle("PeerBCanvas");
         }
 
-        [Test]
         public void GeneratedProfiles_HaveExpectedPeerSettings()
         {
             Mizotake.UnityUiSync.Editor.CanvasUiSyncSampleBuilder.RebuildSampleAssets();
@@ -369,14 +442,14 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(peerA, Is.Not.Null);
             Assert.That(peerB, Is.Not.Null);
             Assert.That(peerA.nodeId, Is.EqualTo("PeerA"));
-            Assert.That(peerA.enableOscTransport, Is.False);
+            Assert.That(peerA.enableOscTransport, Is.True);
             Assert.That(peerA.listenPort, Is.EqualTo(9000));
             Assert.That(peerA.allowedPeers, Is.EquivalentTo(new[] { "PeerB" }));
             Assert.That(peerA.peerEndpoints.Count, Is.EqualTo(1));
             Assert.That(peerA.peerEndpoints[0].name, Is.EqualTo("PeerB"));
             Assert.That(peerA.peerEndpoints[0].port, Is.EqualTo(9001));
             Assert.That(peerB.nodeId, Is.EqualTo("PeerB"));
-            Assert.That(peerB.enableOscTransport, Is.False);
+            Assert.That(peerB.enableOscTransport, Is.True);
             Assert.That(peerB.listenPort, Is.EqualTo(9001));
             Assert.That(peerB.allowedPeers, Is.EquivalentTo(new[] { "PeerA" }));
             Assert.That(peerB.peerEndpoints.Count, Is.EqualTo(1));
@@ -419,6 +492,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(profile.minimumProposeIntervalSeconds, Is.EqualTo(0f));
             Assert.That(profile.minimumCommitBroadcastIntervalSeconds, Is.EqualTo(0f));
             Assert.That(profile.statisticsLogIntervalSeconds, Is.EqualTo(1f));
+            Assert.That(profile.enableOscTransport, Is.True);
             Assert.That(profile.listenPort, Is.EqualTo(1));
             Assert.That(profile.peerEndpoints[0].port, Is.EqualTo(65535));
             Assert.That(profile.peerEndpoints[0].ipAddress, Is.EqualTo("127.0.0.1"));
@@ -529,46 +603,29 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
-        public void LocalRelay_WorksWithoutOscTransport()
+        public void OnLocalStateChanged_UsesOscLoopbackEndpointWhenLegacyFlagIsFalse()
         {
-            var peerACanvas = new GameObject("PeerACanvas", typeof(Canvas));
-            var peerAToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
-            peerAToggleObject.transform.SetParent(peerACanvas.transform, false);
-            var peerASync = peerACanvas.AddComponent<CanvasUiSync>();
-            var peerAProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
-            peerAProfile.nodeId = "PeerA";
-            peerAProfile.enableOscTransport = false;
-            peerAProfile.minimumCommitBroadcastIntervalSeconds = 0f;
-            peerAProfile.allowedPeers.Add("PeerB");
-            peerAProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
-            AssignProfile(peerASync, peerAProfile);
-            AssignCanvasIdOverride(peerASync, "DemoCanvas");
-
-            var peerBCanvas = new GameObject("PeerBCanvas", typeof(Canvas));
-            var peerBToggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
-            peerBToggleObject.transform.SetParent(peerBCanvas.transform, false);
-            var peerBSync = peerBCanvas.AddComponent<CanvasUiSync>();
-            var peerBProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
-            peerBProfile.nodeId = "PeerB";
-            peerBProfile.enableOscTransport = false;
-            peerBProfile.minimumCommitBroadcastIntervalSeconds = 0f;
-            peerBProfile.allowedPeers.Add("PeerA");
-            peerBProfile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerA", ipAddress = "127.0.0.1", port = 9000, enabled = true });
-            AssignProfile(peerBSync, peerBProfile);
-            AssignCanvasIdOverride(peerBSync, "DemoCanvas");
-
-            InvokePrivate(peerASync, "Awake");
-            InvokePrivate(peerASync, "Start");
-            InvokePrivate(peerBSync, "Awake");
-            InvokePrivate(peerBSync, "Start");
-
-            var peerAToggle = peerAToggleObject.GetComponent<Toggle>();
-            var peerBToggle = peerBToggleObject.GetComponent<Toggle>();
-            var peerABindings = (IDictionary)GetPrivateField(peerASync, "bindings");
-            var peerABinding = peerABindings.Values.Cast<object>().Single();
-            InvokePrivate(peerASync, "OnLocalStateChanged", peerABinding, true, false);
-            Assert.That(peerAToggle.isOn, Is.False);
-            Assert.That(peerBToggle.isOn, Is.True);
+            var canvasObject = new GameObject("PeerACanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeId = "PeerA";
+            profile.enableOscTransport = false;
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.allowedPeers.Add("PeerB");
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            AssignCanvasIdOverride(sync, "DemoCanvas");
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings")).Values.Cast<object>().Single();
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            InvokePrivate(sync, "OnLocalStateChanged", binding, true, false);
+            var client = (uOscClient)GetPrivateField(sync, "client");
+            Assert.That(client.address, Is.EqualTo("127.0.0.1"));
+            Assert.That(client.port, Is.EqualTo(9001));
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
         }
 
         private static void AssignProfile(CanvasUiSync sync, CanvasUiSyncProfile profile)

@@ -12,6 +12,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
     public sealed class CanvasUiSyncPlayModeTests
     {
         private const string SampleScenePath = "Assets/Scenes/UnityUiSyncSample.unity";
+        private static int nextTestPort = 19000;
 
         [UnitySetUp]
         public IEnumerator UnitySetUp()
@@ -21,7 +22,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 Object.Destroy(canvas.gameObject);
             }
 
-            yield return null;
+            yield return WaitFrames(3);
         }
 
         [UnityTest]
@@ -56,7 +57,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var peerAOperatorInput = FindControl<InputField>("PeerACanvas", "OperatorInput");
             var peerBOperatorInput = FindControl<InputField>("PeerBCanvas", "OperatorInput");
             var peerASyncButton = FindControl<Button>("PeerACanvas", "SyncButton");
+            var peerATargetToggle = FindControl<Toggle>("PeerACanvas", "TargetToggle");
             var peerBTargetToggle = FindControl<Toggle>("PeerBCanvas", "TargetToggle");
+            var peerAPresenter = FindPresenter("PeerACanvas");
             var peerBPresenter = FindPresenter("PeerBCanvas");
             Assert.That(peerAMasterSlider, Is.Not.Null);
             Assert.That(peerBMasterSlider, Is.Not.Null);
@@ -67,7 +70,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerAOperatorInput, Is.Not.Null);
             Assert.That(peerBOperatorInput, Is.Not.Null);
             Assert.That(peerASyncButton, Is.Not.Null);
+            Assert.That(peerATargetToggle, Is.Not.Null);
             Assert.That(peerBTargetToggle, Is.Not.Null);
+            Assert.That(peerAPresenter, Is.Not.Null);
             Assert.That(peerBPresenter, Is.Not.Null);
 
             peerAMasterSlider.value = 0.9f;
@@ -93,6 +98,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
 
             peerASyncButton.onClick.Invoke();
             yield return WaitFrames(2);
+            Assert.That(peerATargetToggle.isOn, Is.True);
+            Assert.That(peerAPresenter.buttonValueText.text, Is.EqualTo("TRIGGERED"));
+            Assert.That(peerAPresenter.targetValueText.text, Is.EqualTo("ARMED"));
             Assert.That(peerBTargetToggle.isOn, Is.True);
             Assert.That(peerBPresenter.buttonValueText.text, Is.EqualTo("TRIGGERED"));
             Assert.That(peerBPresenter.targetValueText.text, Is.EqualTo("ARMED"));
@@ -101,8 +109,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_SyncsBothDirections_WithoutOscTransport()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
             yield return null;
             yield return null;
 
@@ -120,8 +129,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_LocalOperation_DoesNotOscillateBackAfterSeveralFrames()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
             yield return null;
             yield return null;
 
@@ -137,8 +147,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_RemoteSync_UpdatesSamplePresenterText()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000, true);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort, true);
             yield return null;
             yield return null;
 
@@ -154,8 +165,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_RemoteSync_UpdatesSamplePresenterCheckmark()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000, true);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort, true);
             yield return null;
             yield return null;
 
@@ -172,8 +184,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_RepeatedBidirectionalSync_RemainsConsistentOverManyFrames()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
             yield return null;
             yield return null;
             var expected = false;
@@ -200,8 +213,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         [UnityTest]
         public IEnumerator Toggle_RepeatedEnableDisableWithRescanOnEnable_KeepsSyncStable()
         {
-            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", 9000, 9001);
-            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", 9001, 9000);
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
             SetPrivateField(peerA.sync, "rescanOnEnable", true);
             SetPrivateField(peerB.sync, "rescanOnEnable", true);
             yield return null;
@@ -224,6 +238,25 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return null;
             yield return null;
             Assert.That(peerA.toggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedToggle_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeToggle = CreateRuntimeToggle(peerA.sync.transform, "RuntimeToggle");
+            var peerBRuntimeToggle = CreateRuntimeToggle(peerB.sync.transform, "RuntimeToggle");
+            yield return WaitFrames(10);
+
+            peerARuntimeToggle.isOn = true;
+            yield return WaitFrames(4);
+
+            Assert.That(peerBRuntimeToggle.isOn, Is.True);
         }
 
         private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false)
@@ -256,6 +289,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             profile.profileName = nodeId;
             profile.nodeId = nodeId;
             profile.enableOscTransport = false;
+            profile.listenPort = listenPort;
             profile.minimumCommitBroadcastIntervalSeconds = 0f;
             profile.allowedPeers.Add(remoteNodeId);
             profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = remoteNodeId, ipAddress = "127.0.0.1", port = remotePort, enabled = true });
@@ -263,6 +297,23 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             SetPrivateField(sync, "canvasIdOverride", "DemoCanvas");
             canvasObject.SetActive(true);
             return (sync, toggle, presenter);
+        }
+
+        private static (int peerAPort, int peerBPort) AllocatePortPair()
+        {
+            var peerAPort = nextTestPort;
+            var peerBPort = nextTestPort + 1;
+            nextTestPort += 10;
+            return (peerAPort, peerBPort);
+        }
+
+        private static Toggle CreateRuntimeToggle(Transform parent, string toggleName)
+        {
+            var toggleObject = new GameObject(toggleName, typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(parent, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+            return toggle;
         }
 
         private static void SetPrivateField(object instance, string fieldName, object value)

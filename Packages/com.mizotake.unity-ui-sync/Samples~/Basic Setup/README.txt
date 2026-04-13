@@ -1,4 +1,4 @@
-1. シーン内に PeerA と PeerB の 2 つの Canvas が並んでいます。
-2. 左右どちらかの操作を行うと、反対側のカード表示とコントロールが同期します。
-3. Toggle はランプ色と ON/OFF 表示、Slider と Scrollbar は数値表示、Dropdown と InputField は選択内容の表示が変わります。
-4. SyncButton を押すと Button 状態表示が変わり、TargetToggle のランプも切り替わります。
+1. 左右に 2 つのデモ画面が並びます。
+2. 各列は ラベル / コントロール / 状態表示 の 3 列で整理されています。
+3. すべてのデモ要素は 1 画面に収まるように配置してあります。
+4. Toggle はランプと ON/OFF、Slider と Scrollbar は数値、Dropdown と InputField は内容、Button は READY/TRIGGERED が反映されます。

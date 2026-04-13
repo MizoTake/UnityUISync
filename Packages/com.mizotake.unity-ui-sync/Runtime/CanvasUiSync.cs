@@ -9,7 +9,7 @@ namespace Mizotake.UnityUiSync
     [RequireComponent(typeof(Canvas))]
     public sealed partial class CanvasUiSync : MonoBehaviour
     {
-        private static readonly HashSet<CanvasUiSync> ActiveInstances = new HashSet<CanvasUiSync>();
+        private const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
         private const string HelloAddress = "/uisync/hello";
         private const string RequestSnapshotAddress = "/uisync/requestSnapshot";
         private const string BeginSnapshotAddress = "/uisync/beginSnapshot";
@@ -19,6 +19,7 @@ namespace Mizotake.UnityUiSync
         private const string CommitStateAddress = "/uisync/commitState";
         private const string ProposeButtonAddress = "/uisync/proposeButton";
         private const string CommitButtonAddress = "/uisync/commitButton";
+        private const string TransportHostName = "__CanvasUiSyncTransport";
 
         [SerializeField] private CanvasUiSyncProfile profile;
         [SerializeField] private string canvasIdOverride = string.Empty;
@@ -42,6 +43,7 @@ namespace Mizotake.UnityUiSync
         private float nextSnapshotRequestTime;
         private float nextPeriodicResyncTime;
         private float nextStatisticsLogTime;
+        private float nextHierarchyRescanTime;
         private float snapshotCooldownUntil;
         private int snapshotRetryCount;
         private int suppressionCount;
@@ -56,11 +58,13 @@ namespace Mizotake.UnityUiSync
         private int lastGcCollectionCount0;
         private int lastGcCollectionCount1;
         private int lastGcCollectionCount2;
+        private int bindingHierarchySignature;
         private bool initialized;
         private bool hasSnapshot;
         private uOscServer server;
         private uOscClient client;
         private Canvas canvasComponent;
+        private GameObject transportHost;
 
         private void Awake()
         {
@@ -74,10 +78,10 @@ namespace Mizotake.UnityUiSync
             canvasId = string.IsNullOrWhiteSpace(canvasIdOverride) ? gameObject.name : canvasIdOverride.Trim();
             sessionId = Guid.NewGuid().ToString("N");
             canvasComponent = GetComponent<Canvas>();
-            ActiveInstances.Add(this);
             InitializeTransport();
             ScanBindings();
             InitializeLocalState();
+            bindingHierarchySignature = ComputeBindingHierarchySignature();
             initialized = true;
         }
 
@@ -92,6 +96,7 @@ namespace Mizotake.UnityUiSync
             nextSnapshotRequestTime = Time.unscaledTime;
             nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
             nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            nextHierarchyRescanTime = Time.unscaledTime + RuntimeHierarchyRescanIntervalSeconds;
             lastGcCollectionCount0 = GC.CollectionCount(0);
             lastGcCollectionCount1 = GC.CollectionCount(1);
             lastGcCollectionCount2 = GC.CollectionCount(2);
@@ -104,6 +109,7 @@ namespace Mizotake.UnityUiSync
             {
                 ScanBindings();
                 InitializeLocalState();
+                bindingHierarchySignature = ComputeBindingHierarchySignature();
             }
         }
 
@@ -128,6 +134,7 @@ namespace Mizotake.UnityUiSync
             UpdateContinuousInteractions();
             TickNodeTimeout(now);
             FlushPendingCommits(now);
+            TickRuntimeHierarchyRescan(now);
         }
 
         private void OnDestroy()
@@ -141,42 +148,96 @@ namespace Mizotake.UnityUiSync
             {
                 binding.Dispose();
             }
-
-            ActiveInstances.Remove(this);
         }
 
         private void InitializeTransport()
         {
-            if (!profile.enableOscTransport)
+            server = GetComponent<uOscServer>();
+            client = GetComponent<uOscClient>();
+            GameObject configuredTransportHost = null;
+            if (server == null || client == null)
             {
-                return;
+                configuredTransportHost = GetOrCreateTransportHost();
+                if (configuredTransportHost.activeSelf)
+                {
+                    configuredTransportHost.SetActive(false);
+                }
+
+                if (server == null)
+                {
+                    server = configuredTransportHost.GetComponent<uOscServer>() ?? configuredTransportHost.AddComponent<uOscServer>();
+                }
+
+                if (client == null)
+                {
+                    client = configuredTransportHost.GetComponent<uOscClient>() ?? configuredTransportHost.AddComponent<uOscClient>();
+                }
             }
 
-            server = GetComponent<uOscServer>() ?? gameObject.AddComponent<uOscServer>();
             server.port = profile.listenPort;
             server.autoStart = true;
             server.onDataReceived.RemoveListener(OnOscMessageReceived);
             server.onDataReceived.AddListener(OnOscMessageReceived);
-
-            client = GetComponent<uOscClient>() ?? gameObject.AddComponent<uOscClient>();
             client.address = "127.0.0.1";
             client.port = profile.listenPort;
+            if (configuredTransportHost != null)
+            {
+                configuredTransportHost.SetActive(true);
+            }
+        }
+
+        private GameObject GetOrCreateTransportHost()
+        {
+            if (transportHost != null)
+            {
+                return transportHost;
+            }
+
+            var existingHost = transform.Find(TransportHostName);
+            if (existingHost != null)
+            {
+                transportHost = existingHost.gameObject;
+                return transportHost;
+            }
+
+            transportHost = new GameObject(TransportHostName);
+            transportHost.hideFlags = HideFlags.HideInHierarchy;
+            transportHost.transform.SetParent(transform, false);
+            transportHost.SetActive(false);
+            return transportHost;
         }
 
         private void InitializeLocalState()
         {
+            var previousLocalStates = new Dictionary<string, LocalStateRecord>(localStates);
+            var previousButtonStamps = new Dictionary<string, StateStamp>(latestAppliedButtonStamps);
             localStates.Clear();
             latestAppliedButtonStamps.Clear();
-            PruneTransientStateCaches();
             foreach (var pair in bindings)
             {
                 if (pair.Value.ValueType == "Button")
                 {
+                    if (previousButtonStamps.TryGetValue(pair.Key, out var stamp))
+                    {
+                        latestAppliedButtonStamps[pair.Key] = stamp;
+                    }
+
                     continue;
                 }
 
-                localStates[pair.Key] = new LocalStateRecord(pair.Value.ReadValue(), pair.Value.ValueType, default);
+                var currentValue = pair.Value.ReadValue();
+                if (previousLocalStates.TryGetValue(pair.Key, out var existingState) && string.Equals(existingState.ValueType, pair.Value.ValueType, StringComparison.Ordinal))
+                {
+                    existingState.Value = currentValue;
+                    existingState.PendingValue = currentValue;
+                    localStates[pair.Key] = existingState;
+                    continue;
+                }
+
+                localStates[pair.Key] = new LocalStateRecord(currentValue, pair.Value.ValueType, default);
             }
+
+            PruneTransientStateCaches();
         }
 
         private void PruneTransientStateCaches()

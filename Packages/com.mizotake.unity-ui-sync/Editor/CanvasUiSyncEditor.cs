@@ -53,7 +53,7 @@ namespace Mizotake.UnityUiSync.Editor
             EditorGUILayout.LabelField("シーン固有の補助設定", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox("同じ Profile を使っていても、Scene ごとに上書きしたい補助設定だけをここで持ちます。", MessageType.None);
             EditorGUILayout.PropertyField(canvasIdOverrideProperty, new GUIContent("Canvas ID 上書き", "未指定なら GameObject 名を使います。複数 Canvas を区別したいときだけ設定します。"));
-            EditorGUILayout.PropertyField(rescanOnEnableProperty, new GUIContent("Enable 時に再スキャン", "動的に UI を組み替える Scene でのみ有効化します。通常は無効で構いません。"));
+            EditorGUILayout.PropertyField(rescanOnEnableProperty, new GUIContent("Enable 時に再スキャン", "実行中に生成された Canvas 配下 UI は自動再スキャンされます。これは Enable/Disable をまたぐ再構築に備える補助設定です。"));
 
             serializedObject.ApplyModifiedProperties();
         }

@@ -26,7 +26,7 @@ MonoBehaviour:
   minimumProposeIntervalSeconds: 0.05
   minimumCommitBroadcastIntervalSeconds: 0.05
   stringSendMode: 0
-  enableOscTransport: 0
+  enableOscTransport: 1
   listenPort: 9001
   allowDynamicPeerJoin: 0
   allowedPeers:

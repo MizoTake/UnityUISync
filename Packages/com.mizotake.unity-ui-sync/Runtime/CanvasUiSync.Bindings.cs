@@ -199,5 +199,96 @@ namespace Mizotake.UnityUiSync
                 binding.ApplyValue(value);
             }
         }
+
+        private void TickRuntimeHierarchyRescan(float now)
+        {
+            if (now < nextHierarchyRescanTime)
+            {
+                return;
+            }
+
+            nextHierarchyRescanTime = now + RuntimeHierarchyRescanIntervalSeconds;
+            RefreshBindingsIfHierarchyChanged(false);
+        }
+
+        private bool TryRefreshBindingsForSyncId(string syncId)
+        {
+            if (bindings.ContainsKey(syncId))
+            {
+                return true;
+            }
+
+            RefreshBindingsIfHierarchyChanged(true);
+            return bindings.ContainsKey(syncId);
+        }
+
+        private void RefreshBindingsIfHierarchyChanged(bool force)
+        {
+            var signature = ComputeBindingHierarchySignature();
+            if (!force && signature == bindingHierarchySignature)
+            {
+                return;
+            }
+
+            var previousRegistryHash = registryHash;
+            ScanBindings();
+            InitializeLocalState();
+            bindingHierarchySignature = ComputeBindingHierarchySignature();
+            if (!initialized || string.Equals(previousRegistryHash, registryHash, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            hasSnapshot = false;
+            snapshotRetryCount = 0;
+            nextSnapshotRequestTime = Time.unscaledTime;
+            snapshotCooldownUntil = 0f;
+            SendHello();
+            RequestSnapshotIfNeeded(true);
+        }
+
+        private int ComputeBindingHierarchySignature()
+        {
+            unchecked
+            {
+                var hash = 17;
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Toggle>(true), "Toggle");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Slider>(true), "Slider");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Scrollbar>(true), "Scrollbar");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Dropdown>(true), "Dropdown");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<TMP_Dropdown>(true), "TMP_Dropdown");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<InputField>(true), "InputField");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField");
+                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Button>(true), "Button");
+                return hash;
+            }
+        }
+
+        private void AppendBindingHierarchySignature<TComponent>(ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component
+        {
+            foreach (var component in components)
+            {
+                hash = (hash * 31) + ComputeStableHash(BuildSyncId(component.transform, componentType));
+            }
+        }
+
+        private static int ComputeStableHash(string value)
+        {
+            unchecked
+            {
+                var hash = 23;
+                if (string.IsNullOrEmpty(value))
+                {
+                    return hash;
+                }
+
+                for (var index = 0; index < value.Length; index++)
+                {
+                    hash = (hash * 31) + value[index];
+                }
+
+                return hash;
+            }
+        }
     }
 }

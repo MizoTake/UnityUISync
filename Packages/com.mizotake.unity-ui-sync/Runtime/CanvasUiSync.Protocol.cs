@@ -111,13 +111,6 @@ namespace Mizotake.UnityUiSync
                 Debug.LogWarning("CanvasUiSync registryHash mismatch: local=" + registryHash + " remote=" + incomingRegistryHash, this);
             }
 
-            var localTarget = FindLocalPeerTarget(nodeId);
-            if (localTarget != null)
-            {
-                SendSnapshot(localTarget);
-                return;
-            }
-
             var endpoint = FindPeerTarget(nodeId);
             if (endpoint == null)
             {
@@ -223,7 +216,7 @@ namespace Mizotake.UnityUiSync
             }
 
             var syncId = Convert.ToString(values[3]);
-            if (!bindings.TryGetValue(syncId, out var binding))
+            if (!bindings.TryGetValue(syncId, out var binding) && (!TryRefreshBindingsForSyncId(syncId) || !bindings.TryGetValue(syncId, out binding)))
             {
                 HandleUnknownSyncId(syncId);
                 return;

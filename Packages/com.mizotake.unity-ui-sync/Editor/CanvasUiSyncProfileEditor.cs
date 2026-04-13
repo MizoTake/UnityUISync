@@ -73,8 +73,11 @@ namespace Mizotake.UnityUiSync.Editor
             EditorGUILayout.PropertyField(nodeIdProperty, new GUIContent("ノード ID", "この端末を識別する一意名です。"));
             EditorGUILayout.PropertyField(protocolVersionProperty, new GUIContent("プロトコル バージョン"));
 
-            DrawSectionHeader("ネットワーク", "OSC を使うかどうかと接続先 peer の一覧です。");
-            EditorGUILayout.PropertyField(enableOscTransportProperty, new GUIContent("OSC 通信を使う", "オフにすると同一 process 内の peer だけを直接同期します。"));
+            DrawSectionHeader("ネットワーク", "ローカル通信を含め、現在は常に uOSC で送受信します。");
+            using (new EditorGUI.DisabledScope(true))
+            {
+                EditorGUILayout.PropertyField(enableOscTransportProperty, new GUIContent("OSC 通信を使う", "互換性のために残していますが、現在は常に有効です。"));
+            }
             EditorGUILayout.PropertyField(listenPortProperty, new GUIContent("受信ポート"));
             EditorGUILayout.PropertyField(allowDynamicPeerJoinProperty, new GUIContent("動的参加を許可", "許可すると allowedPeers にない nodeId も受信します。"));
             if (!allowDynamicPeerJoinProperty.boolValue)

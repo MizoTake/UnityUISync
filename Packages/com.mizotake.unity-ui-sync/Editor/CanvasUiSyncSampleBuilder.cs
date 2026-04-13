@@ -58,7 +58,7 @@ namespace Mizotake.UnityUiSync.Editor
                 profile.profileName = "PeerA";
                 profile.nodeId = "PeerA";
                 profile.protocolVersion = 4;
-                profile.enableOscTransport = false;
+                profile.enableOscTransport = true;
                 profile.listenPort = 9000;
                 profile.allowDynamicPeerJoin = false;
                 profile.allowedPeers.Clear();
@@ -73,7 +73,7 @@ namespace Mizotake.UnityUiSync.Editor
                 profile.profileName = "PeerB";
                 profile.nodeId = "PeerB";
                 profile.protocolVersion = 4;
-                profile.enableOscTransport = false;
+                profile.enableOscTransport = true;
                 profile.listenPort = 9001;
                 profile.allowDynamicPeerJoin = false;
                 profile.allowedPeers.Clear();

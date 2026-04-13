@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace Mizotake.UnityUiSync
@@ -30,11 +31,6 @@ namespace Mizotake.UnityUiSync
 
             foreach (var endpoint in GetActivePeerTargets())
             {
-                if (TrySendToLocalPeer(endpoint.name, RequestSnapshotAddress, profile.nodeId, canvasId, registryHash))
-                {
-                    continue;
-                }
-
                 SendTo(endpoint.ipAddress, endpoint.port, RequestSnapshotAddress, profile.nodeId, canvasId, registryHash);
             }
 
@@ -111,11 +107,6 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var endpoint in GetActivePeerTargets())
             {
-                if (TrySendToLocalPeer(endpoint.name, HelloAddress, profile.nodeId, profile.protocolVersion, canvasId, sessionId))
-                {
-                    continue;
-                }
-
                 SendTo(endpoint.ipAddress, endpoint.port, HelloAddress, profile.nodeId, profile.protocolVersion, canvasId, sessionId);
             }
         }
@@ -203,7 +194,7 @@ namespace Mizotake.UnityUiSync
             {
                 if (pair.Value.ValueType != "Button" && localStates.TryGetValue(pair.Key, out var state))
                 {
-                    yield return new object[] { snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), state.Stamp.LogicalTicks, state.Stamp.NodeId, state.Stamp.Sequence };
+                    yield return new object[] { snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId, state.Stamp.Sequence };
                 }
             }
         }
@@ -212,12 +203,7 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var endpoint in GetActivePeerTargets())
             {
-                if (TrySendToLocalPeer(endpoint.name, CommitStateAddress, profile.nodeId, sessionId, canvasId, syncId, valueType, SerializeValue(value, valueType), stamp.LogicalTicks, stamp.NodeId, stamp.Sequence))
-                {
-                    continue;
-                }
-
-                SendTo(endpoint.ipAddress, endpoint.port, CommitStateAddress, profile.nodeId, sessionId, canvasId, syncId, valueType, SerializeValue(value, valueType), stamp.LogicalTicks, stamp.NodeId, stamp.Sequence);
+                SendTo(endpoint.ipAddress, endpoint.port, CommitStateAddress, profile.nodeId, sessionId, canvasId, syncId, valueType, SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
             }
         }
 
@@ -225,46 +211,8 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var endpoint in GetActivePeerTargets())
             {
-                if (TrySendToLocalPeer(endpoint.name, CommitButtonAddress, profile.nodeId, sessionId, canvasId, syncId, stamp.LogicalTicks, stamp.NodeId, stamp.Sequence))
-                {
-                    continue;
-                }
-
-                SendTo(endpoint.ipAddress, endpoint.port, CommitButtonAddress, profile.nodeId, sessionId, canvasId, syncId, stamp.LogicalTicks, stamp.NodeId, stamp.Sequence);
+                SendTo(endpoint.ipAddress, endpoint.port, CommitButtonAddress, profile.nodeId, sessionId, canvasId, syncId, SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
             }
-        }
-
-        private CanvasUiSync FindLocalPeerTarget(string nodeId)
-        {
-            foreach (var instance in ActiveInstances)
-            {
-                if (instance != null && instance != this && instance.initialized && instance.profile != null && string.Equals(instance.profile.nodeId, nodeId, StringComparison.Ordinal) && string.Equals(instance.canvasId, canvasId, StringComparison.Ordinal))
-                {
-                    return instance;
-                }
-            }
-
-            return null;
-        }
-
-        private bool TrySendToLocalPeer(string nodeId, string address, params object[] values)
-        {
-            var target = FindLocalPeerTarget(nodeId);
-            if (target == null)
-            {
-                return false;
-            }
-
-            target.ReceiveLocalMessage(address, values);
-            sentMessageCount++;
-            sentValueCount += values.Length;
-            sentApproxBytes += EstimatePayloadBytes(address, values);
-            return true;
-        }
-
-        private void ReceiveLocalMessage(string address, object[] values)
-        {
-            HandleReceivedPayload(address, values);
         }
 
         private bool HasActivePeerTarget()
@@ -292,7 +240,7 @@ namespace Mizotake.UnityUiSync
 
         private void SendTo(string ipAddress, int port, string address, params object[] values)
         {
-            if (profile.enableOscTransport && client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
+            if (client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
             {
                 client.address = ipAddress;
                 client.port = port;
@@ -325,6 +273,11 @@ namespace Mizotake.UnityUiSync
             }
 
             return bytes;
+        }
+
+        private static string SerializeLogicalTicks(long logicalTicks)
+        {
+            return logicalTicks.ToString(CultureInfo.InvariantCulture);
         }
     }
 }
