@@ -22,15 +22,6 @@ namespace Mizotake.UnityUiSync.Editor
         private const string PackageReadmePath = PackageSampleRootPath + "/README.txt";
         private const string DemoCanvasId = "DemoCanvas";
 
-        [InitializeOnLoadMethod]
-        private static void AutoRebuildSampleAssets()
-        {
-            if (!File.Exists(AssetScenePath))
-            {
-                EditorApplication.delayCall += RebuildSampleAssets;
-            }
-        }
-
         [MenuItem("Tools/Unity UI Sync/Rebuild Sample Assets")]
         public static void RebuildSampleAssets()
         {
