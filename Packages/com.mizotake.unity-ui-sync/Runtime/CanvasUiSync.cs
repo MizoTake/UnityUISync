@@ -27,6 +27,8 @@ namespace Mizotake.UnityUiSync
         [SerializeField] internal bool rescanOnEnable;
 
         internal readonly Dictionary<string, UiSyncBinding> bindings = new Dictionary<string, UiSyncBinding>();
+        internal readonly List<UiSyncBinding> continuousBindings = new List<UiSyncBinding>();
+        internal readonly List<UiSyncBinding> polledBindings = new List<UiSyncBinding>();
         internal readonly Dictionary<string, NodeState> nodes = new Dictionary<string, NodeState>();
         internal readonly Dictionary<string, LocalStateRecord> localStates = new Dictionary<string, LocalStateRecord>();
         internal readonly Dictionary<string, StateStamp> latestAppliedButtonStamps = new Dictionary<string, StateStamp>();
@@ -47,6 +49,7 @@ namespace Mizotake.UnityUiSync
         internal float nextPeriodicResyncTime;
         internal float nextStatisticsLogTime;
         internal float nextHierarchyRescanTime;
+        internal float nextPendingCommitTime = float.PositiveInfinity;
         internal float snapshotCooldownUntil;
         internal int snapshotRetryCount;
         internal int suppressionCount;

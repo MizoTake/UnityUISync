@@ -37,6 +37,7 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.PruneTransientStateCaches();
+            RecalculateNextPendingCommitTime(owner);
             owner.ApplyPendingRemoteCommits();
             owner.ApplyPendingRemoteButtonCommits();
         }
@@ -100,7 +101,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void UpdateContinuousInteractions(CanvasUiSync owner)
         {
-            if (owner.bindings.Count == 0)
+            if (owner.continuousBindings.Count == 0)
             {
                 return;
             }
@@ -108,9 +109,9 @@ namespace Mizotake.UnityUiSync
             if (Input.GetMouseButtonDown(0))
             {
                 var eventCamera = owner.canvasComponent != null && owner.canvasComponent.renderMode != RenderMode.ScreenSpaceOverlay ? owner.canvasComponent.worldCamera : null;
-                foreach (var binding in owner.bindings.Values)
+                foreach (var binding in owner.continuousBindings)
                 {
-                    if (!binding.IsContinuous || binding.Component is not RectTransform rectTransform)
+                    if (binding.Component is not RectTransform rectTransform)
                     {
                         continue;
                     }
@@ -124,9 +125,9 @@ namespace Mizotake.UnityUiSync
 
             if (Input.GetMouseButtonUp(0))
             {
-                foreach (var binding in owner.bindings.Values)
+                foreach (var binding in owner.continuousBindings)
                 {
-                    if (binding.IsContinuous && binding.IsInteracting)
+                    if (binding.IsInteracting)
                     {
                         owner.OnInteractionEnded(binding);
                     }
@@ -136,13 +137,13 @@ namespace Mizotake.UnityUiSync
 
         internal static void UpdatePolledBindings(CanvasUiSync owner)
         {
-            foreach (var binding in owner.bindings.Values)
+            if (owner.polledBindings.Count == 0)
             {
-                if (!binding.RequiresPolling)
-                {
-                    continue;
-                }
+                return;
+            }
 
+            foreach (var binding in owner.polledBindings)
+            {
                 var currentValue = binding.ReadValue();
                 if (owner.localStates.TryGetValue(binding.SyncId, out var state) && AreEquivalent(state.Value, currentValue))
                 {
@@ -161,6 +162,7 @@ namespace Mizotake.UnityUiSync
                 owner.localStates[binding.SyncId] = state;
             }
 
+            var hadPendingBroadcast = state.HasPendingBroadcast;
             state.Value = value;
             state.Stamp = stamp;
             state.PendingValue = value;
@@ -171,16 +173,22 @@ namespace Mizotake.UnityUiSync
             }
 
             var now = Time.unscaledTime;
-            if (now - state.LastBroadcastAt >= Mathf.Max(0f, owner.profile.minimumCommitBroadcastIntervalSeconds))
+            var minimumCommitBroadcastIntervalSeconds = Mathf.Max(0f, owner.profile.minimumCommitBroadcastIntervalSeconds);
+            if (now - state.LastBroadcastAt >= minimumCommitBroadcastIntervalSeconds)
             {
                 owner.BroadcastCommit(binding.SyncId, binding.ValueType, value, stamp);
                 state.LastBroadcastAt = now;
                 state.HasPendingBroadcast = false;
+                if (hadPendingBroadcast)
+                {
+                    RecalculateNextPendingCommitTime(owner);
+                }
             }
             else
             {
                 state.HasPendingBroadcast = true;
-                state.NextBroadcastAt = state.LastBroadcastAt + Mathf.Max(0f, owner.profile.minimumCommitBroadcastIntervalSeconds);
+                state.NextBroadcastAt = state.LastBroadcastAt + minimumCommitBroadcastIntervalSeconds;
+                owner.nextPendingCommitTime = Mathf.Min(owner.nextPendingCommitTime, state.NextBroadcastAt);
             }
         }
 
@@ -252,11 +260,23 @@ namespace Mizotake.UnityUiSync
 
         internal static void FlushPendingCommits(CanvasUiSync owner, float now)
         {
+            if (now < owner.nextPendingCommitTime)
+            {
+                return;
+            }
+
+            var nextPendingCommitTime = float.PositiveInfinity;
             foreach (var pair in owner.localStates)
             {
                 var state = pair.Value;
-                if (!state.HasPendingBroadcast || now < state.NextBroadcastAt)
+                if (!state.HasPendingBroadcast)
                 {
+                    continue;
+                }
+
+                if (now < state.NextBroadcastAt)
+                {
+                    nextPendingCommitTime = Mathf.Min(nextPendingCommitTime, state.NextBroadcastAt);
                     continue;
                 }
 
@@ -264,6 +284,8 @@ namespace Mizotake.UnityUiSync
                 state.HasPendingBroadcast = false;
                 state.LastBroadcastAt = now;
             }
+
+            owner.nextPendingCommitTime = nextPendingCommitTime;
         }
 
         private static bool AreEquivalent(object left, object right)
@@ -284,6 +306,23 @@ namespace Mizotake.UnityUiSync
             }
 
             return Equals(left, right);
+        }
+
+        private static void RecalculateNextPendingCommitTime(CanvasUiSync owner)
+        {
+            var nextPendingCommitTime = float.PositiveInfinity;
+            foreach (var pair in owner.localStates)
+            {
+                var state = pair.Value;
+                if (!state.HasPendingBroadcast)
+                {
+                    continue;
+                }
+
+                nextPendingCommitTime = Mathf.Min(nextPendingCommitTime, state.NextBroadcastAt);
+            }
+
+            owner.nextPendingCommitTime = nextPendingCommitTime;
         }
     }
 }

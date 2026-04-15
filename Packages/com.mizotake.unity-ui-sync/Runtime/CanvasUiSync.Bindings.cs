@@ -16,6 +16,104 @@ namespace Mizotake.UnityUiSync
         private static readonly FieldInfo UiDropdownBlockerField = typeof(Dropdown).GetField("m_Blocker", BindingFlags.Instance | BindingFlags.NonPublic);
         private static readonly FieldInfo TmpDropdownListField = typeof(TMP_Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
         private static readonly FieldInfo TmpDropdownBlockerField = typeof(TMP_Dropdown).GetField("m_Blocker", BindingFlags.Instance | BindingFlags.NonPublic);
+        internal sealed class BindingScanContext
+        {
+            public BindingScanContext(CanvasUiSync owner)
+            {
+                Dropdowns = owner.GetComponentsInChildren<Dropdown>(true);
+                TmpDropdowns = owner.GetComponentsInChildren<TMP_Dropdown>(true);
+                dropdownTemplateRoots = new List<Transform>(Dropdowns.Length + TmpDropdowns.Length);
+                dropdownRuntimeRoots = new List<Transform>((Dropdowns.Length + TmpDropdowns.Length) * 2);
+                CacheDropdownRoots(Dropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
+                CacheDropdownRoots(TmpDropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
+            }
+
+            private readonly List<Transform> dropdownTemplateRoots;
+            private readonly List<Transform> dropdownRuntimeRoots;
+            public Dropdown[] Dropdowns { get; }
+            public TMP_Dropdown[] TmpDropdowns { get; }
+
+            public bool IsTemplateComponent(Transform target)
+            {
+                return IsUnderRoots(target, dropdownTemplateRoots);
+            }
+
+            public bool IsRuntimeComponent(Transform target)
+            {
+                return IsUnderRoots(target, dropdownRuntimeRoots);
+            }
+
+            private static void CacheDropdownRoots(IEnumerable<Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            {
+                foreach (var dropdown in dropdowns)
+                {
+                    if (dropdown == null)
+                    {
+                        continue;
+                    }
+
+                    if (dropdown.template != null)
+                    {
+                        templateRoots.Add(dropdown.template);
+                    }
+
+                    if (UiDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null)
+                    {
+                        runtimeRoots.Add(dropdownList.transform);
+                    }
+
+                    if (UiDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null)
+                    {
+                        runtimeRoots.Add(blocker.transform);
+                    }
+                }
+            }
+
+            private static void CacheDropdownRoots(IEnumerable<TMP_Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            {
+                foreach (var dropdown in dropdowns)
+                {
+                    if (dropdown == null)
+                    {
+                        continue;
+                    }
+
+                    if (dropdown.template != null)
+                    {
+                        templateRoots.Add(dropdown.template);
+                    }
+
+                    if (TmpDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null)
+                    {
+                        runtimeRoots.Add(dropdownList.transform);
+                    }
+
+                    if (TmpDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null)
+                    {
+                        runtimeRoots.Add(blocker.transform);
+                    }
+                }
+            }
+
+            private static bool IsUnderRoots(Transform target, List<Transform> roots)
+            {
+                if (target == null)
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < roots.Count; index++)
+                {
+                    var root = roots[index];
+                    if (root != null && (target == root || target.IsChildOf(root)))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
 
         internal static void ScanBindings(CanvasUiSync owner)
         {
@@ -25,6 +123,8 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.bindings.Clear();
+            owner.continuousBindings.Clear();
+            owner.polledBindings.Clear();
             RegisterToggles(owner);
             RegisterSliders(owner);
             RegisterScrollbars(owner);
@@ -196,6 +296,15 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.bindings.Add(binding.SyncId, binding);
+            if (binding.IsContinuous)
+            {
+                owner.continuousBindings.Add(binding);
+            }
+
+            if (binding.RequiresPolling)
+            {
+                owner.polledBindings.Add(binding);
+            }
         }
 
         internal static string BuildSyncId(CanvasUiSync owner, Transform target, string componentType)
@@ -257,25 +366,7 @@ namespace Mizotake.UnityUiSync
 
         internal static string ReadExplicitBindingId(Component target)
         {
-            var bindingIdType = typeof(CanvasUiSync).Assembly.GetType("Mizotake.UnityUiSync.CanvasUiSyncBindingId");
-            if (bindingIdType == null)
-            {
-                return null;
-            }
-
-            var bindingId = target.GetComponent(bindingIdType);
-            if (bindingId == null)
-            {
-                return null;
-            }
-
-            var property = bindingIdType.GetProperty("BindingId", BindingFlags.Instance | BindingFlags.Public);
-            if (property == null)
-            {
-                return null;
-            }
-
-            return property.GetValue(bindingId) as string;
+            return target != null && target.TryGetComponent<CanvasUiSyncBindingId>(out var bindingId) ? bindingId.BindingId : null;
         }
 
         internal static string ComputeRegistryHash(CanvasUiSync owner)
@@ -353,26 +444,27 @@ namespace Mizotake.UnityUiSync
         {
             unchecked
             {
+                var context = new BindingScanContext(owner);
                 var hash = 17;
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Toggle>(true), "Toggle");
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Slider>(true), "Slider");
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Scrollbar>(true), "Scrollbar");
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Dropdown>(true), "Dropdown");
-                AppendDropdownItemToggleBindingSignatures(owner, ref hash);
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_Dropdown>(true), "TMP_Dropdown");
-                AppendTmpDropdownItemToggleBindingSignatures(owner, ref hash);
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<InputField>(true), "InputField");
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField");
-                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Button>(true), "Button");
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<Toggle>(true), "Toggle", context);
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<Slider>(true), "Slider", context);
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<Scrollbar>(true), "Scrollbar", context);
+                AppendBindingHierarchySignature(owner, ref hash, context.Dropdowns, "Dropdown", context);
+                AppendDropdownItemToggleBindingSignatures(owner, ref hash, context);
+                AppendBindingHierarchySignature(owner, ref hash, context.TmpDropdowns, "TMP_Dropdown", context);
+                AppendTmpDropdownItemToggleBindingSignatures(owner, ref hash, context);
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<InputField>(true), "InputField", context);
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField", context);
+                AppendBindingHierarchySignature(owner, ref hash, owner.GetComponentsInChildren<Button>(true), "Button", context);
                 return hash;
             }
         }
 
-        internal static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component
+        internal static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, IEnumerable<TComponent> components, string componentType, BindingScanContext context = null) where TComponent : Component
         {
             foreach (var component in components)
             {
-                if (ShouldSkipComponent(owner, component))
+                if (ShouldSkipComponent(owner, component, context))
                 {
                     continue;
                 }
@@ -399,9 +491,9 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static void AppendDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash)
+        private static void AppendDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash, BindingScanContext context)
         {
-            foreach (var dropdown in owner.GetComponentsInChildren<Dropdown>(true))
+            foreach (var dropdown in context.Dropdowns)
             {
                 for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
                 {
@@ -410,9 +502,9 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static void AppendTmpDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash)
+        private static void AppendTmpDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash, BindingScanContext context)
         {
-            foreach (var dropdown in owner.GetComponentsInChildren<TMP_Dropdown>(true))
+            foreach (var dropdown in context.TmpDropdowns)
             {
                 for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
                 {
@@ -421,13 +513,18 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component)
+        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext context = null)
         {
-            return component != null && !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform) || IsDropdownRuntimeComponent(owner, component.transform));
+            return component != null && !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
         }
 
-        private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target)
+        private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
         {
+            if (context != null)
+            {
+                return context.IsTemplateComponent(target);
+            }
+
             foreach (var dropdown in owner.GetComponentsInChildren<Dropdown>(true))
             {
                 if (dropdown.template != null && (target == dropdown.template || target.IsChildOf(dropdown.template)))
@@ -447,8 +544,13 @@ namespace Mizotake.UnityUiSync
             return false;
         }
 
-        private static bool IsDropdownRuntimeComponent(CanvasUiSync owner, Transform target)
+        private static bool IsDropdownRuntimeComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
         {
+            if (context != null)
+            {
+                return context.IsRuntimeComponent(target);
+            }
+
             foreach (var dropdown in owner.GetComponentsInChildren<Dropdown>(true))
             {
                 if (UiDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null && (target == dropdownList.transform || target.IsChildOf(dropdownList.transform)))

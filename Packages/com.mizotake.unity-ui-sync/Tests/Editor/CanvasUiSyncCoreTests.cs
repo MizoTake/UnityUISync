@@ -365,6 +365,37 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void ScanBindings_ClassifiesContinuousAndPolledBindingsWithoutDuplication()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sliderObject = DefaultControls.CreateSlider(new DefaultControls.Resources());
+            sliderObject.name = "MasterSlider";
+            sliderObject.transform.SetParent(canvasObject.transform, false);
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+
+            var continuousBindings = ((IEnumerable)GetPrivateField(sync, "continuousBindings")).Cast<object>().ToArray();
+            var polledBindings = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().ToArray();
+
+            Assert.That(continuousBindings.Length, Is.EqualTo(1));
+            Assert.That(polledBindings.Length, Is.EqualTo(3));
+
+            InvokePrivate(sync, "ScanBindings");
+
+            Assert.That(((IEnumerable)GetPrivateField(sync, "continuousBindings")).Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Count(), Is.EqualTo(3));
+        }
+
+        [Test]
         public void SerializeLogicalTicks_ReturnsOscSerializableString()
         {
             var method = typeof(CanvasUiSync).GetMethod("SerializeLogicalTicks", BindingFlags.Static | BindingFlags.NonPublic);
@@ -518,6 +549,39 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(sync, "HandleCommitButton", "PeerA", "SessionA", "OperationCanvas", syncId, 100L, "PeerA", 1);
             InvokePrivate(sync, "HandleCommitButton", "PeerA", "SessionA", "OperationCanvas", syncId, 100L, "PeerA", 1);
             Assert.That(invokeCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void CommitLocalState_TracksNextPendingCommitTimeAndFlushesWhenDue()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0.5f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings")).Values.Cast<object>().Single();
+            var syncId = (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
+            var state = ((IDictionary)GetPrivateField(sync, "localStates"))[syncId];
+            var beforeCommitTime = Time.unscaledTime;
+            state.GetType().GetProperty("LastBroadcastAt").SetValue(state, beforeCommitTime);
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            InvokePrivate(sync, "CommitLocalState", binding, true, false, CreateStamp(sync, 10L, "PeerA", 1));
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+            Assert.That((bool)state.GetType().GetProperty("HasPendingBroadcast").GetValue(state), Is.True);
+            Assert.That((float)GetPrivateField(sync, "nextPendingCommitTime"), Is.EqualTo(beforeCommitTime + 0.5f).Within(0.05f));
+
+            InvokePrivate(sync, "FlushPendingCommits", beforeCommitTime + 0.25f);
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+
+            InvokePrivate(sync, "FlushPendingCommits", beforeCommitTime + 0.51f);
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+            Assert.That((bool)state.GetType().GetProperty("HasPendingBroadcast").GetValue(state), Is.False);
+            Assert.That((float)GetPrivateField(sync, "nextPendingCommitTime"), Is.EqualTo(float.PositiveInfinity));
         }
 
         [Test]
