@@ -154,6 +154,119 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator SampleScene_DropdownClickSelection_SyncsAcrossPeers_WithoutRegisteringRuntimeItems()
+        {
+            var initialEventSystemCount = Object.FindObjectsOfType<EventSystem>(true).Length;
+            yield return LoadSampleScene();
+            var peerADropdown = FindControl<Dropdown>("PeerACanvas", "ModeDropdown");
+            var peerBDropdown = FindControl<Dropdown>("PeerBCanvas", "ModeDropdown");
+            var peerAPresenter = FindPresenter("PeerACanvas");
+            var peerBPresenter = FindPresenter("PeerBCanvas");
+            var peerASync = FindSync("PeerACanvas");
+            var peerBSync = FindSync("PeerBCanvas");
+            Assert.That(peerADropdown, Is.Not.Null);
+            Assert.That(peerBDropdown, Is.Not.Null);
+            Assert.That(peerAPresenter, Is.Not.Null);
+            Assert.That(peerBPresenter, Is.Not.Null);
+            Assert.That(peerASync, Is.Not.Null);
+            Assert.That(peerBSync, Is.Not.Null);
+            peerADropdown.alphaFadeSpeed = 0f;
+            peerBDropdown.alphaFadeSpeed = 0f;
+
+            var peerABindingCount = GetBindingCount(peerASync);
+            var peerBBindingCount = GetBindingCount(peerBSync);
+
+            ClickDropdown(peerADropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 30);
+
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.True);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.True);
+
+            SelectDropdownItem(peerADropdown, 2);
+            yield return WaitUntil(() => peerADropdown.value == 2 && peerBDropdown.value == 2 && !IsDropdownExpanded(peerADropdown) && !IsDropdownExpanded(peerBDropdown) && peerAPresenter.modeValueText.text == "Bypass" && peerBPresenter.modeValueText.text == "Bypass", 60);
+
+            Assert.That(peerADropdown.value, Is.EqualTo(2));
+            Assert.That(peerBDropdown.value, Is.EqualTo(2));
+            Assert.That(peerAPresenter.modeValueText.text, Is.EqualTo("Bypass"));
+            Assert.That(peerBPresenter.modeValueText.text, Is.EqualTo("Bypass"));
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.False);
+            Assert.That(GetBindingCount(peerASync), Is.EqualTo(peerABindingCount));
+            Assert.That(GetBindingCount(peerBSync), Is.EqualTo(peerBBindingCount), DescribeBindings(peerBSync));
+            Assert.That(Object.FindObjectsOfType<EventSystem>(true).Length, Is.EqualTo(initialEventSystemCount + 1));
+        }
+
+        [UnityTest]
+        public IEnumerator SampleScene_DropdownClickSelection_WithDefaultFade_DoesNotReopenAndAllowsSecondSelection()
+        {
+            yield return LoadSampleScene();
+            var peerADropdown = FindControl<Dropdown>("PeerACanvas", "ModeDropdown");
+            var peerBDropdown = FindControl<Dropdown>("PeerBCanvas", "ModeDropdown");
+            var peerAPresenter = FindPresenter("PeerACanvas");
+            var peerBPresenter = FindPresenter("PeerBCanvas");
+            Assert.That(peerADropdown, Is.Not.Null);
+            Assert.That(peerBDropdown, Is.Not.Null);
+            Assert.That(peerAPresenter, Is.Not.Null);
+            Assert.That(peerBPresenter, Is.Not.Null);
+
+            ClickDropdown(peerADropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 30);
+            SelectDropdownItem(peerADropdown, 2);
+            yield return WaitUntil(() => peerADropdown.value == 2 && peerBDropdown.value == 2 && !IsDropdownExpanded(peerADropdown) && !IsDropdownExpanded(peerBDropdown), 120);
+
+            yield return WaitFrames(20);
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.False);
+            Assert.That(peerAPresenter.modeValueText.text, Is.EqualTo("Bypass"));
+            Assert.That(peerBPresenter.modeValueText.text, Is.EqualTo("Bypass"));
+
+            ClickDropdown(peerADropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 30);
+            SelectDropdownItem(peerADropdown, 1);
+            yield return WaitUntil(() => peerADropdown.value == 1 && peerBDropdown.value == 1 && !IsDropdownExpanded(peerADropdown) && !IsDropdownExpanded(peerBDropdown), 120);
+
+            yield return WaitFrames(20);
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.False);
+            Assert.That(peerAPresenter.modeValueText.text, Is.EqualTo("Live"));
+            Assert.That(peerBPresenter.modeValueText.text, Is.EqualTo("Live"));
+        }
+
+        [UnityTest]
+        public IEnumerator SampleScene_DropdownOpenItems_FollowRemoteSelectionWhileExpanded()
+        {
+            yield return LoadSampleScene();
+            var peerADropdown = FindControl<Dropdown>("PeerACanvas", "ModeDropdown");
+            var peerBDropdown = FindControl<Dropdown>("PeerBCanvas", "ModeDropdown");
+            var peerASync = FindSync("PeerACanvas");
+            var peerBSync = FindSync("PeerBCanvas");
+            Assert.That(peerADropdown, Is.Not.Null);
+            Assert.That(peerBDropdown, Is.Not.Null);
+            Assert.That(peerASync, Is.Not.Null);
+            Assert.That(peerBSync, Is.Not.Null);
+            peerADropdown.alphaFadeSpeed = 0f;
+            peerBDropdown.alphaFadeSpeed = 0f;
+
+            ClickDropdown(peerADropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown), 30);
+            ClickDropdown(peerBDropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 30);
+            yield return WaitUntil(() => HasBinding(peerASync, "DemoCanvas/ModeDropdown:DropdownItemToggle[0]") && HasBinding(peerASync, "DemoCanvas/ModeDropdown:DropdownItemToggle[1]") && HasBinding(peerASync, "DemoCanvas/ModeDropdown:DropdownItemToggle[2]") && HasBinding(peerBSync, "DemoCanvas/ModeDropdown:DropdownItemToggle[0]") && HasBinding(peerBSync, "DemoCanvas/ModeDropdown:DropdownItemToggle[1]") && HasBinding(peerBSync, "DemoCanvas/ModeDropdown:DropdownItemToggle[2]"), 60);
+
+            var peerBItemToggles = GetDropdownItemToggles(peerBDropdown);
+            Assert.That(peerBItemToggles[1].isOn, Is.True);
+            Assert.That(peerBItemToggles[2].isOn, Is.False);
+
+            peerADropdown.value = 2;
+            yield return WaitUntil(() => peerBDropdown.value == 2 && GetDropdownItemToggles(peerBDropdown)[2].isOn && !GetDropdownItemToggles(peerBDropdown)[1].isOn, 60);
+
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.True);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.True);
+            Assert.That(GetDropdownItemToggles(peerBDropdown)[2].isOn, Is.True);
+            Assert.That(GetDropdownItemToggles(peerBDropdown)[1].isOn, Is.False);
+        }
+
+        [UnityTest]
         public IEnumerator Toggle_SyncsBothDirections_WithoutOscTransport()
         {
             var ports = AllocatePortPair();
@@ -389,6 +502,63 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return WaitUntil(() => peerBRuntimeDropdown.value == 2, 60);
 
             Assert.That(peerBRuntimeDropdown.value, Is.EqualTo(2));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDropdown_ClickOpenAndBlockerClose_SyncsAcrossPeers()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeDropdown = CreateRuntimeDropdown(peerA.sync.transform, "ClickableDropdown");
+            var peerBRuntimeDropdown = CreateRuntimeDropdown(peerB.sync.transform, "ClickableDropdown");
+            peerARuntimeDropdown.alphaFadeSpeed = 0f;
+            peerBRuntimeDropdown.alphaFadeSpeed = 0f;
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/ClickableDropdown:DropdownExpanded") && HasBinding(peerB.sync, "DemoCanvas/ClickableDropdown:DropdownExpanded"), 60);
+
+            ClickDropdown(peerARuntimeDropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerARuntimeDropdown) && IsDropdownExpanded(peerBRuntimeDropdown), 60);
+
+            Assert.That(IsDropdownExpanded(peerARuntimeDropdown), Is.True);
+            Assert.That(IsDropdownExpanded(peerBRuntimeDropdown), Is.True);
+
+            ClickDropdownBlocker(peerARuntimeDropdown);
+            yield return WaitUntil(() => !IsDropdownExpanded(peerARuntimeDropdown) && !IsDropdownExpanded(peerBRuntimeDropdown), 60);
+
+            Assert.That(IsDropdownExpanded(peerARuntimeDropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBRuntimeDropdown), Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDropdown_ClickOption_SyncsValueAndClosesAcrossPeers()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeDropdown = CreateRuntimeDropdown(peerA.sync.transform, "SelectableDropdown");
+            var peerBRuntimeDropdown = CreateRuntimeDropdown(peerB.sync.transform, "SelectableDropdown");
+            peerARuntimeDropdown.alphaFadeSpeed = 0f;
+            peerBRuntimeDropdown.alphaFadeSpeed = 0f;
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/SelectableDropdown:Dropdown") && HasBinding(peerB.sync, "DemoCanvas/SelectableDropdown:DropdownExpanded"), 60);
+
+            ClickDropdown(peerARuntimeDropdown);
+            yield return WaitUntil(() => IsDropdownExpanded(peerARuntimeDropdown) && IsDropdownExpanded(peerBRuntimeDropdown), 60);
+
+            SelectDropdownItem(peerARuntimeDropdown, 2);
+            yield return WaitUntil(() => peerARuntimeDropdown.value == 2 && peerBRuntimeDropdown.value == 2 && !IsDropdownExpanded(peerARuntimeDropdown) && !IsDropdownExpanded(peerBRuntimeDropdown), 60);
+
+            Assert.That(peerARuntimeDropdown.value, Is.EqualTo(2));
+            Assert.That(peerBRuntimeDropdown.value, Is.EqualTo(2));
+            Assert.That(IsDropdownExpanded(peerARuntimeDropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBRuntimeDropdown), Is.False);
         }
 
         [UnityTest]
@@ -741,6 +911,60 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var field = typeof(Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null);
             return field.GetValue(dropdown) != null;
+        }
+
+        private static void EnsureEventSystemExists()
+        {
+            if (Object.FindObjectOfType<EventSystem>() != null)
+            {
+                return;
+            }
+
+            var eventSystemObject = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            Object.DontDestroyOnLoad(eventSystemObject);
+        }
+
+        private static void ClickDropdown(Dropdown dropdown)
+        {
+            var eventSystem = Object.FindObjectOfType<EventSystem>();
+            Assert.That(eventSystem, Is.Not.Null);
+            var eventData = new PointerEventData(eventSystem) { button = PointerEventData.InputButton.Left };
+            ExecuteEvents.Execute<IPointerClickHandler>(dropdown.gameObject, eventData, ExecuteEvents.pointerClickHandler);
+        }
+
+        private static void ClickDropdownBlocker(Dropdown dropdown)
+        {
+            var eventSystem = Object.FindObjectOfType<EventSystem>();
+            Assert.That(eventSystem, Is.Not.Null);
+            var blockerField = typeof(Dropdown).GetField("m_Blocker", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(blockerField, Is.Not.Null);
+            var blocker = blockerField.GetValue(dropdown) as GameObject;
+            Assert.That(blocker, Is.Not.Null);
+            var eventData = new PointerEventData(eventSystem) { button = PointerEventData.InputButton.Left };
+            ExecuteEvents.Execute<IPointerClickHandler>(blocker, eventData, ExecuteEvents.pointerClickHandler);
+        }
+
+        private static void SelectDropdownItem(Dropdown dropdown, int optionIndex)
+        {
+            var eventSystem = Object.FindObjectOfType<EventSystem>();
+            Assert.That(eventSystem, Is.Not.Null);
+            var dropdownField = typeof(Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(dropdownField, Is.Not.Null);
+            var dropdownList = dropdownField.GetValue(dropdown) as GameObject;
+            Assert.That(dropdownList, Is.Not.Null);
+            var toggle = GetDropdownItemToggles(dropdown)[optionIndex];
+            Assert.That(toggle, Is.Not.Null);
+            var eventData = new PointerEventData(eventSystem) { button = PointerEventData.InputButton.Left };
+            ExecuteEvents.Execute<IPointerClickHandler>(toggle.gameObject, eventData, ExecuteEvents.pointerClickHandler);
+        }
+
+        private static Toggle[] GetDropdownItemToggles(Dropdown dropdown)
+        {
+            var dropdownField = typeof(Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(dropdownField, Is.Not.Null);
+            var dropdownList = dropdownField.GetValue(dropdown) as GameObject;
+            Assert.That(dropdownList, Is.Not.Null);
+            return dropdownList.GetComponentsInChildren<Toggle>(true).Skip(1).Take(dropdown.options.Count).ToArray();
         }
 
         private static object GetPrivateField(object instance, string fieldName)

@@ -232,6 +232,17 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            if (binding.RequiresPolling)
+            {
+                owner.ApplyValueToBinding(binding, value);
+                var observedValue = binding.ReadValue();
+                state.Value = observedValue;
+                state.Stamp = stamp;
+                state.PendingValue = observedValue;
+                state.PendingStamp = stamp;
+                return;
+            }
+
             state.Value = value;
             state.Stamp = stamp;
             state.PendingValue = value;

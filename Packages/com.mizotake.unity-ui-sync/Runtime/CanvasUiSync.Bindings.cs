@@ -91,12 +91,13 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var component in owner.GetComponentsInChildren<Dropdown>(true))
             {
-                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Dropdown"), "Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
-                UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Dropdown"), "Dropdown", () => component.value, value => SetDropdownValue(component, Convert.ToInt32(value)), false);
+                UnityEngine.Events.UnityAction<int> listener = value => { SyncOpenDropdownItemToggles(component, value); owner.OnLocalStateChanged(binding, value, false); };
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
                 owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "DropdownExpanded"), "DropdownExpanded", () => IsDropdownExpanded(component), value => SetDropdownExpanded(component, Convert.ToBoolean(value)), false, true));
+                RegisterDropdownItemToggles(owner, component);
             }
         }
 
@@ -104,12 +105,13 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var component in owner.GetComponentsInChildren<TMP_Dropdown>(true))
             {
-                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
-                UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", () => component.value, value => SetDropdownValue(component, Convert.ToInt32(value)), false);
+                UnityEngine.Events.UnityAction<int> listener = value => { SyncOpenDropdownItemToggles(component, value); owner.OnLocalStateChanged(binding, value, false); };
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
                 owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded", () => IsDropdownExpanded(component), value => SetDropdownExpanded(component, Convert.ToBoolean(value)), false, true));
+                RegisterTmpDropdownItemToggles(owner, component);
             }
         }
 
@@ -356,7 +358,9 @@ namespace Mizotake.UnityUiSync
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Slider>(true), "Slider");
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Scrollbar>(true), "Scrollbar");
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Dropdown>(true), "Dropdown");
+                AppendDropdownItemToggleBindingSignatures(owner, ref hash);
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_Dropdown>(true), "TMP_Dropdown");
+                AppendTmpDropdownItemToggleBindingSignatures(owner, ref hash);
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<InputField>(true), "InputField");
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField");
                 owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Button>(true), "Button");
@@ -374,6 +378,46 @@ namespace Mizotake.UnityUiSync
                 }
 
                 hash = (hash * 31) + ComputeStableHash(owner.BuildSyncId(component.transform, componentType));
+            }
+        }
+
+        private static void RegisterDropdownItemToggles(CanvasUiSync owner, Dropdown dropdown)
+        {
+            for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+            {
+                var capturedOptionIndex = optionIndex;
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, owner.BuildSyncId(dropdown.transform, "DropdownItemToggle[" + capturedOptionIndex + "]"), "Toggle", () => ReadDropdownItemToggle(dropdown, capturedOptionIndex), value => SetDropdownItemToggle(dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false, true));
+            }
+        }
+
+        private static void RegisterTmpDropdownItemToggles(CanvasUiSync owner, TMP_Dropdown dropdown)
+        {
+            for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+            {
+                var capturedOptionIndex = optionIndex;
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, owner.BuildSyncId(dropdown.transform, "TMP_DropdownItemToggle[" + capturedOptionIndex + "]"), "Toggle", () => ReadDropdownItemToggle(dropdown, capturedOptionIndex), value => SetDropdownItemToggle(dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false, true));
+            }
+        }
+
+        private static void AppendDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash)
+        {
+            foreach (var dropdown in owner.GetComponentsInChildren<Dropdown>(true))
+            {
+                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+                {
+                    hash = (hash * 31) + ComputeStableHash(owner.BuildSyncId(dropdown.transform, "DropdownItemToggle[" + optionIndex + "]"));
+                }
+            }
+        }
+
+        private static void AppendTmpDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash)
+        {
+            foreach (var dropdown in owner.GetComponentsInChildren<TMP_Dropdown>(true))
+            {
+                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+                {
+                    hash = (hash * 31) + ComputeStableHash(owner.BuildSyncId(dropdown.transform, "TMP_DropdownItemToggle[" + optionIndex + "]"));
+                }
             }
         }
 
@@ -459,6 +503,118 @@ namespace Mizotake.UnityUiSync
             if (IsDropdownExpanded(dropdown))
             {
                 dropdown.Hide();
+            }
+        }
+
+        private static bool ReadDropdownItemToggle(Dropdown dropdown, int optionIndex)
+        {
+            return dropdown != null && optionIndex >= 0 && optionIndex < dropdown.options.Count && dropdown.value == optionIndex;
+        }
+
+        private static bool ReadDropdownItemToggle(TMP_Dropdown dropdown, int optionIndex)
+        {
+            return dropdown != null && optionIndex >= 0 && optionIndex < dropdown.options.Count && dropdown.value == optionIndex;
+        }
+
+        private static void SetDropdownItemToggle(Dropdown dropdown, int optionIndex, bool isOn)
+        {
+            if (dropdown == null || optionIndex < 0 || optionIndex >= dropdown.options.Count)
+            {
+                return;
+            }
+
+            if (isOn)
+            {
+                SetDropdownValue(dropdown, optionIndex);
+                return;
+            }
+
+            var runtimeToggle = GetDropdownItemToggle(dropdown, optionIndex);
+            if (runtimeToggle != null && dropdown.value != optionIndex)
+            {
+                runtimeToggle.SetIsOnWithoutNotify(false);
+            }
+        }
+
+        private static void SetDropdownItemToggle(TMP_Dropdown dropdown, int optionIndex, bool isOn)
+        {
+            if (dropdown == null || optionIndex < 0 || optionIndex >= dropdown.options.Count)
+            {
+                return;
+            }
+
+            if (isOn)
+            {
+                SetDropdownValue(dropdown, optionIndex);
+                return;
+            }
+
+            var runtimeToggle = GetDropdownItemToggle(dropdown, optionIndex);
+            if (runtimeToggle != null && dropdown.value != optionIndex)
+            {
+                runtimeToggle.SetIsOnWithoutNotify(false);
+            }
+        }
+
+        private static Toggle GetDropdownItemToggle(Dropdown dropdown, int optionIndex)
+        {
+            if (UiDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            {
+                return null;
+            }
+
+            return dropdownList.GetComponentsInChildren<Toggle>(true).Skip(1).Take(dropdown.options.Count).ElementAtOrDefault(optionIndex);
+        }
+
+        private static Toggle GetDropdownItemToggle(TMP_Dropdown dropdown, int optionIndex)
+        {
+            if (TmpDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            {
+                return null;
+            }
+
+            return dropdownList.GetComponentsInChildren<Toggle>(true).Skip(1).Take(dropdown.options.Count).ElementAtOrDefault(optionIndex);
+        }
+
+        private static void SetDropdownValue(Dropdown dropdown, int value)
+        {
+            dropdown.SetValueWithoutNotify(value);
+            dropdown.RefreshShownValue();
+            SyncOpenDropdownItemToggles(dropdown, value);
+        }
+
+        private static void SetDropdownValue(TMP_Dropdown dropdown, int value)
+        {
+            dropdown.SetValueWithoutNotify(value);
+            dropdown.RefreshShownValue();
+            SyncOpenDropdownItemToggles(dropdown, value);
+        }
+
+        private static void SyncOpenDropdownItemToggles(Dropdown dropdown, int selectedOptionIndex)
+        {
+            if (UiDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            {
+                return;
+            }
+
+            var toggles = dropdownList.GetComponentsInChildren<Toggle>(true).Skip(1).Take(dropdown.options.Count).ToArray();
+            for (var optionIndex = 0; optionIndex < toggles.Length; optionIndex++)
+            {
+                toggles[optionIndex].SetIsOnWithoutNotify(optionIndex == selectedOptionIndex);
+            }
+        }
+
+        private static void SyncOpenDropdownItemToggles(TMP_Dropdown dropdown, int selectedOptionIndex)
+        {
+            if (TmpDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            {
+                return;
+            }
+
+            var toggles = dropdownList.GetComponentsInChildren<Toggle>(true).Skip(1).Take(dropdown.options.Count).ToArray();
+            for (var optionIndex = 0; optionIndex < toggles.Length; optionIndex++)
+            {
+                toggles[optionIndex].SetIsOnWithoutNotify(optionIndex == selectedOptionIndex);
             }
         }
 

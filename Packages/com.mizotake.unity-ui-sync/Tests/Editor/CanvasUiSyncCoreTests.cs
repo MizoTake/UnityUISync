@@ -360,6 +360,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
 
             Assert.That(bindingKeys.Count(key => key.EndsWith(":Dropdown", System.StringComparison.Ordinal)), Is.EqualTo(1));
             Assert.That(bindingKeys.Count(key => key.EndsWith(":DropdownExpanded", System.StringComparison.Ordinal)), Is.EqualTo(1));
+            Assert.That(bindingKeys.Count(key => key.Contains(":DropdownItemToggle[", System.StringComparison.Ordinal)), Is.EqualTo(dropdownObject.GetComponent<Dropdown>().options.Count));
             Assert.That(bindingKeys.Any(key => key.EndsWith(":Toggle", System.StringComparison.Ordinal)), Is.False);
         }
 
