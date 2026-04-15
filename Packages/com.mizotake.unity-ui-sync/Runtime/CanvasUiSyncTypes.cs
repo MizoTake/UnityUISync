@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace Mizotake.UnityUiSync
 {
@@ -15,5 +16,17 @@ namespace Mizotake.UnityUiSync
         public string ipAddress = "127.0.0.1";
         public int port = 9001;
         public bool enabled = true;
+    }
+
+    [DisallowMultipleComponent]
+    public sealed class CanvasUiSyncBindingId : MonoBehaviour
+    {
+        [SerializeField] private string bindingId = string.Empty;
+
+        public string BindingId
+        {
+            get => bindingId;
+            set => bindingId = value;
+        }
     }
 }

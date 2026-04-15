@@ -229,6 +229,53 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleCommitState_AfterRuntimeGeneratedDropdown_RescansAndAppliesRemoteState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "RuntimeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            dropdown.options.Add(new Dropdown.OptionData("Bypass"));
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", dropdownObject.transform, "Dropdown");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Dropdown", 2, 100L, "PeerB", 1);
+
+            Assert.That(dropdown.value, Is.EqualTo(2));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
+        }
+
+        [Test]
+        public void ScanBindings_DropdownInternalTemplateControls_AreNotRegistered()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+
+            var bindingKeys = ((IDictionary)GetPrivateField(sync, "bindings")).Keys.Cast<string>().ToArray();
+
+            Assert.That(bindingKeys.Count(key => key.EndsWith(":Dropdown", System.StringComparison.Ordinal)), Is.EqualTo(1));
+            Assert.That(bindingKeys.Count(key => key.EndsWith(":DropdownExpanded", System.StringComparison.Ordinal)), Is.EqualTo(1));
+            Assert.That(bindingKeys.Any(key => key.EndsWith(":Toggle", System.StringComparison.Ordinal)), Is.False);
+        }
+
+        [Test]
         public void SerializeLogicalTicks_ReturnsOscSerializableString()
         {
             var method = typeof(CanvasUiSync).GetMethod("SerializeLogicalTicks", BindingFlags.Static | BindingFlags.NonPublic);

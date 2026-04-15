@@ -337,7 +337,7 @@ namespace Mizotake.UnityUiSync
 
         internal static object SerializeValue(CanvasUiSync owner, object value, string valueType)
         {
-            if (valueType == "Toggle")
+            if (valueType == "Toggle" || valueType == "DropdownExpanded" || valueType == "TMP_DropdownExpanded")
             {
                 return Convert.ToBoolean(value);
             }

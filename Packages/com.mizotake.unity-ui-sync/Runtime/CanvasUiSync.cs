@@ -120,7 +120,7 @@ namespace Mizotake.UnityUiSync
 
         internal sealed class UiSyncBinding : IDisposable
         {
-            public UiSyncBinding(Component component, string syncId, string valueType, Func<object> readValue, Action<object> applyValue, bool isContinuous)
+            public UiSyncBinding(Component component, string syncId, string valueType, Func<object> readValue, Action<object> applyValue, bool isContinuous, bool requiresPolling = false)
             {
                 Component = component;
                 SyncId = syncId;
@@ -128,6 +128,7 @@ namespace Mizotake.UnityUiSync
                 this.readValue = readValue;
                 this.applyValue = applyValue;
                 IsContinuous = isContinuous;
+                RequiresPolling = requiresPolling;
             }
 
             private readonly Func<object> readValue;
@@ -136,6 +137,7 @@ namespace Mizotake.UnityUiSync
             public string SyncId { get; }
             public string ValueType { get; }
             public bool IsContinuous { get; }
+            public bool RequiresPolling { get; }
             public bool IsInteracting { get; set; }
             public Action Unsubscribe { get; set; }
 
@@ -265,6 +267,7 @@ namespace Mizotake.UnityUiSync
             TickPeriodicResync(now);
             TickStatisticsLog(now);
             UpdateContinuousInteractions();
+            UpdatePolledBindings();
             TickNodeTimeout(now);
             FlushPendingCommits(now);
             TickRuntimeHierarchyRescan(now);
@@ -672,6 +675,11 @@ namespace Mizotake.UnityUiSync
         internal void UpdateContinuousInteractions()
         {
             CanvasUiSyncStateService.UpdateContinuousInteractions(this);
+        }
+
+        internal void UpdatePolledBindings()
+        {
+            CanvasUiSyncStateService.UpdatePolledBindings(this);
         }
 
         internal void CommitLocalState(UiSyncBinding binding, object value, bool applyToLocalUi, StateStamp stamp)

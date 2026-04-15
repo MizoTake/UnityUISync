@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using UnityEngine.UI;
@@ -37,7 +38,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBPresenter, Is.Not.Null);
 
             peerAPowerToggle.isOn = true;
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => peerBPowerToggle.isOn && peerBPresenter.powerValueText.text == "ON" && peerBPresenter.powerToggleCheckmark.enabled, 30);
 
             Assert.That(peerBPowerToggle.isOn, Is.True);
             Assert.That(peerBPresenter.powerValueText.text, Is.EqualTo("ON"));
@@ -76,34 +77,80 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBPresenter, Is.Not.Null);
 
             peerAMasterSlider.value = 0.9f;
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => Mathf.Abs(peerBMasterSlider.value - 0.9f) < 0.0001f && peerBPresenter.sliderValueText.text == "0.90", 30);
             Assert.That(peerBMasterSlider.value, Is.EqualTo(0.9f).Within(0.0001f));
             Assert.That(peerBPresenter.sliderValueText.text, Is.EqualTo("0.90"));
 
             peerAIntensityScrollbar.value = 0.15f;
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => Mathf.Abs(peerBIntensityScrollbar.value - 0.15f) < 0.0001f && peerBPresenter.scrollbarValueText.text == "0.15", 30);
             Assert.That(peerBIntensityScrollbar.value, Is.EqualTo(0.15f).Within(0.0001f));
             Assert.That(peerBPresenter.scrollbarValueText.text, Is.EqualTo("0.15"));
 
             peerAModeDropdown.value = 2;
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => peerBModeDropdown.value == 2 && peerBPresenter.modeValueText.text == "Bypass", 30);
             Assert.That(peerBModeDropdown.value, Is.EqualTo(2));
             Assert.That(peerBPresenter.modeValueText.text, Is.EqualTo("Bypass"));
 
             peerAOperatorInput.text = "Operator Z";
             peerAOperatorInput.onEndEdit.Invoke("Operator Z");
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => peerBOperatorInput.text == "Operator Z" && peerBPresenter.operatorValueText.text == "Operator Z", 30);
             Assert.That(peerBOperatorInput.text, Is.EqualTo("Operator Z"));
             Assert.That(peerBPresenter.operatorValueText.text, Is.EqualTo("Operator Z"));
 
             peerASyncButton.onClick.Invoke();
-            yield return WaitFrames(2);
+            yield return WaitUntil(() => peerATargetToggle.isOn && peerBTargetToggle.isOn && peerAPresenter.buttonValueText.text == "TRIGGERED" && peerAPresenter.targetValueText.text == "ARMED" && peerBPresenter.buttonValueText.text == "TRIGGERED" && peerBPresenter.targetValueText.text == "ARMED", 30);
             Assert.That(peerATargetToggle.isOn, Is.True);
             Assert.That(peerAPresenter.buttonValueText.text, Is.EqualTo("TRIGGERED"));
             Assert.That(peerAPresenter.targetValueText.text, Is.EqualTo("ARMED"));
             Assert.That(peerBTargetToggle.isOn, Is.True);
             Assert.That(peerBPresenter.buttonValueText.text, Is.EqualTo("TRIGGERED"));
             Assert.That(peerBPresenter.targetValueText.text, Is.EqualTo("ARMED"));
+        }
+
+        [UnityTest]
+        public IEnumerator SampleScene_DropdownShowHide_SyncsAcrossPeers_WithoutRegisteringRuntimeItems()
+        {
+            yield return LoadSampleScene();
+            var peerADropdown = FindControl<Dropdown>("PeerACanvas", "ModeDropdown");
+            var peerBDropdown = FindControl<Dropdown>("PeerBCanvas", "ModeDropdown");
+            var peerASync = FindSync("PeerACanvas");
+            var peerBSync = FindSync("PeerBCanvas");
+            Assert.That(peerADropdown, Is.Not.Null);
+            Assert.That(peerBDropdown, Is.Not.Null);
+            Assert.That(peerASync, Is.Not.Null);
+            Assert.That(peerBSync, Is.Not.Null);
+            peerADropdown.alphaFadeSpeed = 0f;
+            peerBDropdown.alphaFadeSpeed = 0f;
+
+            var peerABindingCount = GetBindingCount(peerASync);
+            var peerBBindingCount = GetBindingCount(peerBSync);
+
+            peerADropdown.Show();
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 30);
+
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.True);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.True);
+            Assert.That(GetBindingCount(peerASync), Is.EqualTo(peerABindingCount));
+            Assert.That(GetBindingCount(peerBSync), Is.EqualTo(peerBBindingCount));
+
+            peerADropdown.Hide();
+            yield return WaitUntil(() => !IsDropdownExpanded(peerADropdown) && !IsDropdownExpanded(peerBDropdown), 60);
+
+            Assert.That(IsDropdownExpanded(peerADropdown), Is.False);
+            Assert.That(IsDropdownExpanded(peerBDropdown), Is.False);
+            Assert.That(GetBindingCount(peerASync), Is.EqualTo(peerABindingCount));
+            Assert.That(GetBindingCount(peerBSync), Is.EqualTo(peerBBindingCount), DescribeBindings(peerBSync));
+            foreach (var sync in Object.FindObjectsOfType<CanvasUiSync>(true))
+            {
+                Object.Destroy(sync.gameObject);
+            }
+
+            foreach (var eventSystem in Object.FindObjectsOfType<EventSystem>(true))
+            {
+                Object.Destroy(eventSystem.gameObject);
+            }
+
+            yield return WaitFrames(3);
         }
 
         [UnityTest]
@@ -116,12 +163,12 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return null;
 
             peerA.toggle.isOn = true;
-            yield return null;
+            yield return WaitUntil(() => peerA.toggle.isOn && peerB.toggle.isOn, 30);
             Assert.That(peerA.toggle.isOn, Is.True);
             Assert.That(peerB.toggle.isOn, Is.True);
 
             peerB.toggle.isOn = false;
-            yield return null;
+            yield return WaitUntil(() => !peerA.toggle.isOn && !peerB.toggle.isOn, 30);
             Assert.That(peerA.toggle.isOn, Is.False);
             Assert.That(peerB.toggle.isOn, Is.False);
         }
@@ -136,9 +183,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return null;
 
             peerA.toggle.isOn = true;
-            yield return null;
-            yield return null;
-            yield return null;
+            yield return WaitUntil(() => peerA.toggle.isOn && peerB.toggle.isOn, 30);
 
             Assert.That(peerA.toggle.isOn, Is.True);
             Assert.That(peerB.toggle.isOn, Is.True);
@@ -154,8 +199,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return null;
 
             peerA.toggle.isOn = true;
-            yield return null;
-            yield return null;
+            yield return WaitUntil(() => peerB.toggle.isOn && peerB.presenter != null && peerB.presenter.powerValueText.text == "ON", 30);
 
             Assert.That(peerB.toggle.isOn, Is.True);
             Assert.That(peerB.presenter, Is.Not.Null);
@@ -172,8 +216,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return null;
 
             peerA.toggle.isOn = true;
-            yield return null;
-            yield return null;
+            yield return WaitUntil(() => peerB.toggle.isOn && peerB.presenter != null && peerB.presenter.powerToggleCheckmark != null && peerB.presenter.powerToggleCheckmark.enabled, 30);
 
             Assert.That(peerB.toggle.isOn, Is.True);
             Assert.That(peerB.presenter, Is.Not.Null);
@@ -205,7 +248,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 yield return null;
             }
 
-            yield return null;
+            yield return WaitUntil(() => peerA.toggle.isOn == expected && peerB.toggle.isOn == expected, 30);
             Assert.That(peerA.toggle.isOn, Is.EqualTo(expected));
             Assert.That(peerB.toggle.isOn, Is.EqualTo(expected));
         }
@@ -251,10 +294,10 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
 
             var peerARuntimeToggle = CreateRuntimeToggle(peerA.sync.transform, "RuntimeToggle");
             var peerBRuntimeToggle = CreateRuntimeToggle(peerB.sync.transform, "RuntimeToggle");
-            yield return WaitFrames(10);
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/RuntimeToggle:Toggle"), 60);
 
             peerARuntimeToggle.isOn = true;
-            yield return WaitFrames(4);
+            yield return WaitUntil(() => peerBRuntimeToggle.isOn, 60);
 
             Assert.That(peerBRuntimeToggle.isOn, Is.True);
         }
@@ -337,9 +380,56 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             }
         }
 
+        private static IEnumerator WaitUntil(System.Func<bool> condition, int maxFrameCount)
+        {
+            for (var index = 0; index < maxFrameCount; index++)
+            {
+                if (condition())
+                {
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
         private static T FindControl<T>(string canvasName, string controlName) where T : Component
         {
             return Object.FindObjectsOfType<T>(true).FirstOrDefault(component => component.name == controlName && component.GetComponentsInParent<Canvas>(true).Any(canvas => canvas.name == canvasName));
+        }
+
+        private static CanvasUiSync FindSync(string canvasName)
+        {
+            return Object.FindObjectsOfType<CanvasUiSync>(true).FirstOrDefault(component => component.name == canvasName);
+        }
+
+        private static int GetBindingCount(CanvasUiSync sync)
+        {
+            return ((IDictionary)GetPrivateField(sync, "bindings")).Count;
+        }
+
+        private static bool HasBinding(CanvasUiSync sync, string syncId)
+        {
+            return ((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId);
+        }
+
+        private static string DescribeBindings(CanvasUiSync sync)
+        {
+            return string.Join(", ", ((IDictionary)GetPrivateField(sync, "bindings")).Keys.Cast<object>().Select(key => key.ToString()).OrderBy(key => key));
+        }
+
+        private static bool IsDropdownExpanded(Dropdown dropdown)
+        {
+            var field = typeof(Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            return field.GetValue(dropdown) != null;
+        }
+
+        private static object GetPrivateField(object instance, string fieldName)
+        {
+            var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, $"field {fieldName} was not found");
+            return field.GetValue(instance);
         }
 
         private static CanvasUiSyncSamplePresenter FindPresenter(string canvasName)

@@ -134,6 +134,25 @@ namespace Mizotake.UnityUiSync
             }
         }
 
+        internal static void UpdatePolledBindings(CanvasUiSync owner)
+        {
+            foreach (var binding in owner.bindings.Values)
+            {
+                if (!binding.RequiresPolling)
+                {
+                    continue;
+                }
+
+                var currentValue = binding.ReadValue();
+                if (owner.localStates.TryGetValue(binding.SyncId, out var state) && AreEquivalent(state.Value, currentValue))
+                {
+                    continue;
+                }
+
+                owner.OnLocalStateChanged(binding, currentValue, false);
+            }
+        }
+
         internal static void CommitLocalState(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool applyToLocalUi, CanvasUiSync.StateStamp stamp)
         {
             if (!owner.localStates.TryGetValue(binding.SyncId, out var state))
@@ -234,6 +253,26 @@ namespace Mizotake.UnityUiSync
                 state.HasPendingBroadcast = false;
                 state.LastBroadcastAt = now;
             }
+        }
+
+        private static bool AreEquivalent(object left, object right)
+        {
+            if (ReferenceEquals(left, right))
+            {
+                return true;
+            }
+
+            if (left == null || right == null)
+            {
+                return false;
+            }
+
+            if (left is float || right is float)
+            {
+                return Mathf.Approximately(Convert.ToSingle(left), Convert.ToSingle(right));
+            }
+
+            return Equals(left, right);
         }
     }
 }
