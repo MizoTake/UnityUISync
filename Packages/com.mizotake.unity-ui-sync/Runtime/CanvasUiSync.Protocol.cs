@@ -215,12 +215,6 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            var senderNodeId = Convert.ToString(values[0]);
-            if (ShouldIgnoreIncomingPeer(senderNodeId))
-            {
-                return;
-            }
-
             var syncId = Convert.ToString(values[3]);
             if (!TryReadStamp(values, 4, out var stamp))
             {

@@ -55,12 +55,12 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
             var panelObject0 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
             panelObject0.transform.SetParent(canvasObject.transform, false);
-            var id0 = panelObject0.AddComponent<CanvasUiSyncBindingId>();
-            id0.BindingId = "Panel[0]";
+            var id0 = AddBindingId(panelObject0, "Panel[0]");
+            Assert.That(id0, Is.Not.Null);
             var panelObject1 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
             panelObject1.transform.SetParent(canvasObject.transform, false);
-            var id1 = panelObject1.AddComponent<CanvasUiSyncBindingId>();
-            id1.BindingId = "Panel[1]";
+            var id1 = AddBindingId(panelObject1, "Panel[1]");
+            Assert.That(id1, Is.Not.Null);
             InvokePrivate(sync, "Awake");
             InvokePrivate(sync, "ScanBindings");
             var bindings = (IDictionary)GetPrivateField(sync, "bindings");
@@ -92,8 +92,8 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             panelObject.transform.SetParent(canvasObject.transform, false);
             var sliderObject = new GameObject("MasterFader", typeof(RectTransform), typeof(Slider));
             sliderObject.transform.SetParent(panelObject.transform, false);
-            var bindingId = sliderObject.AddComponent<CanvasUiSyncBindingId>();
-            bindingId.BindingId = "CustomSlider";
+            var bindingId = AddBindingId(sliderObject, "CustomSlider");
+            Assert.That(bindingId, Is.Not.Null);
             InvokePrivate(sync, "Awake");
             var result = (string)InvokePrivate(sync, "BuildSyncId", sliderObject.transform, "Slider");
             Assert.That(result, Is.EqualTo("OperationCanvas/CustomSlider:Slider"));
@@ -760,6 +760,24 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, $"field {fieldName} was not found");
             return field.GetValue(instance);
+        }
+
+        private static Component AddBindingId(GameObject target, string bindingIdValue)
+        {
+            var bindingIdType = typeof(CanvasUiSync).Assembly.GetType("Mizotake.UnityUiSync.CanvasUiSyncBindingId");
+            if (bindingIdType == null)
+            {
+                return null;
+            }
+
+            var bindingId = target.AddComponent(bindingIdType);
+            var property = bindingIdType.GetProperty("BindingId", BindingFlags.Instance | BindingFlags.Public);
+            if (property != null)
+            {
+                property.SetValue(bindingId, bindingIdValue);
+            }
+
+            return (Component)bindingId;
         }
     }
 }

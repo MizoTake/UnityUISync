@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using TMPro;
@@ -160,10 +161,10 @@ namespace Mizotake.UnityUiSync
 
         private string BuildSyncId(Transform target, string componentType)
         {
-            var bindingId = target.GetComponent<CanvasUiSyncBindingId>();
-            if (bindingId != null && !string.IsNullOrWhiteSpace(bindingId.BindingId))
+            var bindingId = ReadExplicitBindingId(target);
+            if (!string.IsNullOrWhiteSpace(bindingId))
             {
-                return canvasId + "/" + bindingId.BindingId + ":" + componentType;
+                return canvasId + "/" + bindingId + ":" + componentType;
             }
 
             return canvasId + "/" + BuildPath(target) + ":" + componentType;
@@ -180,6 +181,29 @@ namespace Mizotake.UnityUiSync
             }
 
             return stack.Count == 0 ? transform.name : string.Join("/", stack.ToArray());
+        }
+
+        private static string ReadExplicitBindingId(Component target)
+        {
+            var bindingIdType = typeof(CanvasUiSync).Assembly.GetType("Mizotake.UnityUiSync.CanvasUiSyncBindingId");
+            if (bindingIdType == null)
+            {
+                return null;
+            }
+
+            var bindingId = target.GetComponent(bindingIdType);
+            if (bindingId == null)
+            {
+                return null;
+            }
+
+            var property = bindingIdType.GetProperty("BindingId", BindingFlags.Instance | BindingFlags.Public);
+            if (property == null)
+            {
+                return null;
+            }
+
+            return property.GetValue(bindingId) as string;
         }
 
         private string ComputeRegistryHash()
