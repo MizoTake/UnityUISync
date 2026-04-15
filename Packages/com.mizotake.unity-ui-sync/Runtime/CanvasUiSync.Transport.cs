@@ -5,84 +5,141 @@ using UnityEngine;
 
 namespace Mizotake.UnityUiSync
 {
-    public sealed partial class CanvasUiSync
+    internal static class CanvasUiSyncTransportService
     {
-        private void TickSnapshotRetry(float now)
+        internal static void InitializeTransport(CanvasUiSync owner)
         {
-            if (!hasSnapshot && now >= snapshotCooldownUntil && now >= nextSnapshotRequestTime && snapshotRetryCount < Mathf.Max(1, profile.snapshotRequestRetryCount))
+            owner.server = owner.GetComponent<uOSC.uOscServer>();
+            owner.client = owner.GetComponent<uOSC.uOscClient>();
+            GameObject configuredTransportHost = null;
+            if (owner.server == null || owner.client == null)
             {
-                RequestSnapshotIfNeeded(false);
+                configuredTransportHost = owner.GetOrCreateTransportHost();
+                if (configuredTransportHost.activeSelf)
+                {
+                    configuredTransportHost.SetActive(false);
+                }
+
+                if (owner.server == null)
+                {
+                    owner.server = configuredTransportHost.GetComponent<uOSC.uOscServer>() ?? configuredTransportHost.AddComponent<uOSC.uOscServer>();
+                }
+
+                if (owner.client == null)
+                {
+                    owner.client = configuredTransportHost.GetComponent<uOSC.uOscClient>() ?? configuredTransportHost.AddComponent<uOSC.uOscClient>();
+                }
+            }
+
+            owner.server.port = owner.profile.listenPort;
+            owner.server.autoStart = true;
+            owner.server.onDataReceived.RemoveListener(owner.OnOscMessageReceived);
+            owner.server.onDataReceived.AddListener(owner.OnOscMessageReceived);
+            owner.client.address = "127.0.0.1";
+            owner.client.port = owner.profile.listenPort;
+            if (configuredTransportHost != null)
+            {
+                configuredTransportHost.SetActive(true);
             }
         }
 
-        private void RequestSnapshotIfNeeded(bool force)
+        internal static GameObject GetOrCreateTransportHost(CanvasUiSync owner)
         {
-            if (!HasActivePeerTarget())
+            if (owner.transportHost != null)
             {
-                hasSnapshot = true;
+                return owner.transportHost;
+            }
+
+            var existingHost = owner.transform.Find(CanvasUiSync.TransportHostName);
+            if (existingHost != null)
+            {
+                owner.transportHost = existingHost.gameObject;
+                return owner.transportHost;
+            }
+
+            owner.transportHost = new GameObject(CanvasUiSync.TransportHostName);
+            owner.transportHost.hideFlags = HideFlags.HideInHierarchy;
+            owner.transportHost.transform.SetParent(owner.transform, false);
+            owner.transportHost.SetActive(false);
+            return owner.transportHost;
+        }
+
+        internal static void TickSnapshotRetry(CanvasUiSync owner, float now)
+        {
+            if (!owner.hasSnapshot && now >= owner.snapshotCooldownUntil && now >= owner.nextSnapshotRequestTime && owner.snapshotRetryCount < Mathf.Max(1, owner.profile.snapshotRequestRetryCount))
+            {
+                owner.RequestSnapshotIfNeeded(false);
+            }
+        }
+
+        internal static void RequestSnapshotIfNeeded(CanvasUiSync owner, bool force)
+        {
+            if (!owner.HasActivePeerTarget())
+            {
+                owner.hasSnapshot = true;
                 return;
             }
 
             var now = Time.unscaledTime;
-            if (!force && now < snapshotCooldownUntil)
+            if (!force && now < owner.snapshotCooldownUntil)
             {
                 return;
             }
 
-            foreach (var endpoint in GetActivePeerTargets())
+            foreach (var endpoint in owner.GetActivePeerTargets())
             {
-                SendTo(endpoint.ipAddress, endpoint.port, RequestSnapshotAddress, profile.nodeId, canvasId, registryHash);
+                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.RequestSnapshotAddress, owner.profile.nodeId, owner.canvasId, owner.registryHash);
             }
 
-            snapshotRetryCount++;
-            nextSnapshotRequestTime = now + Mathf.Max(0.1f, profile.snapshotRequestIntervalSeconds);
-            snapshotCooldownUntil = now + Mathf.Max(0.1f, profile.snapshotRetryCooldownSeconds);
+            owner.snapshotRetryCount++;
+            owner.nextSnapshotRequestTime = now + Mathf.Max(0.1f, owner.profile.snapshotRequestIntervalSeconds);
+            owner.snapshotCooldownUntil = now + Mathf.Max(0.1f, owner.profile.snapshotRetryCooldownSeconds);
         }
 
-        private void TickSnapshotCleanup(float now)
+        internal static void TickSnapshotCleanup(CanvasUiSync owner, float now)
         {
-            if (activeSnapshotIds.Count == 0)
+            if (owner.activeSnapshotIds.Count == 0)
             {
                 return;
             }
 
-            expiredSnapshotIds.Clear();
-            foreach (var pair in activeSnapshotIds)
+            owner.expiredSnapshotIds.Clear();
+            foreach (var pair in owner.activeSnapshotIds)
             {
                 if (pair.Value <= now)
                 {
-                    expiredSnapshotIds.Add(pair.Key);
+                    owner.expiredSnapshotIds.Add(pair.Key);
                 }
             }
 
-            foreach (var snapshotId in expiredSnapshotIds)
+            foreach (var snapshotId in owner.expiredSnapshotIds)
             {
-                activeSnapshotIds.Remove(snapshotId);
-                if (profile.verboseLog)
+                owner.activeSnapshotIds.Remove(snapshotId);
+                if (owner.profile.verboseLog)
                 {
-                    Debug.LogWarning("CanvasUiSync snapshot timeout cleanup: " + snapshotId + " canvas=" + canvasId, this);
+                    Debug.LogWarning("CanvasUiSync snapshot timeout cleanup: " + snapshotId + " canvas=" + owner.canvasId, owner);
                 }
             }
 
-            expiredSnapshotIds.Clear();
+            owner.expiredSnapshotIds.Clear();
         }
 
-        private void TickPeriodicResync(float now)
+        internal static void TickPeriodicResync(CanvasUiSync owner, float now)
         {
-            if (profile.periodicFullResyncIntervalSeconds <= 0f || now < nextPeriodicResyncTime)
+            if (owner.profile.periodicFullResyncIntervalSeconds <= 0f || now < owner.nextPeriodicResyncTime)
             {
                 return;
             }
 
-            hasSnapshot = false;
-            snapshotRetryCount = 0;
-            RequestSnapshotIfNeeded(true);
-            nextPeriodicResyncTime = now + profile.periodicFullResyncIntervalSeconds;
+            owner.hasSnapshot = false;
+            owner.snapshotRetryCount = 0;
+            owner.RequestSnapshotIfNeeded(true);
+            owner.nextPeriodicResyncTime = now + owner.profile.periodicFullResyncIntervalSeconds;
         }
 
-        private void TickStatisticsLog(float now)
+        internal static void TickStatisticsLog(CanvasUiSync owner, float now)
         {
-            if (!profile.enableStatisticsLog || now < nextStatisticsLogTime)
+            if (!owner.profile.enableStatisticsLog || now < owner.nextStatisticsLogTime)
             {
                 return;
             }
@@ -90,53 +147,53 @@ namespace Mizotake.UnityUiSync
             var gc0 = GC.CollectionCount(0);
             var gc1 = GC.CollectionCount(1);
             var gc2 = GC.CollectionCount(2);
-            Debug.Log("CanvasUiSync stats: canvas=" + canvasId + " sentMessages=" + sentMessageCount + " receivedMessages=" + receivedMessageCount + " sentValues=" + sentValueCount + " receivedValues=" + receivedValueCount + " sentBytes~=" + sentApproxBytes + " receivedBytes~=" + receivedApproxBytes + " gc0Delta=" + (gc0 - lastGcCollectionCount0) + " gc1Delta=" + (gc1 - lastGcCollectionCount1) + " gc2Delta=" + (gc2 - lastGcCollectionCount2), this);
-            sentMessageCount = 0;
-            receivedMessageCount = 0;
-            sentValueCount = 0;
-            receivedValueCount = 0;
-            sentApproxBytes = 0;
-            receivedApproxBytes = 0;
-            lastGcCollectionCount0 = gc0;
-            lastGcCollectionCount1 = gc1;
-            lastGcCollectionCount2 = gc2;
-            nextStatisticsLogTime = now + profile.statisticsLogIntervalSeconds;
+            Debug.Log("CanvasUiSync stats: canvas=" + owner.canvasId + " sentMessages=" + owner.sentMessageCount + " receivedMessages=" + owner.receivedMessageCount + " sentValues=" + owner.sentValueCount + " receivedValues=" + owner.receivedValueCount + " sentBytes~=" + owner.sentApproxBytes + " receivedBytes~=" + owner.receivedApproxBytes + " gc0Delta=" + (gc0 - owner.lastGcCollectionCount0) + " gc1Delta=" + (gc1 - owner.lastGcCollectionCount1) + " gc2Delta=" + (gc2 - owner.lastGcCollectionCount2), owner);
+            owner.sentMessageCount = 0;
+            owner.receivedMessageCount = 0;
+            owner.sentValueCount = 0;
+            owner.receivedValueCount = 0;
+            owner.sentApproxBytes = 0;
+            owner.receivedApproxBytes = 0;
+            owner.lastGcCollectionCount0 = gc0;
+            owner.lastGcCollectionCount1 = gc1;
+            owner.lastGcCollectionCount2 = gc2;
+            owner.nextStatisticsLogTime = now + owner.profile.statisticsLogIntervalSeconds;
         }
 
-        private void SendHello()
+        internal static void SendHello(CanvasUiSync owner)
         {
-            foreach (var endpoint in GetActivePeerTargets())
+            foreach (var endpoint in owner.GetActivePeerTargets())
             {
-                SendTo(endpoint.ipAddress, endpoint.port, HelloAddress, profile.nodeId, profile.protocolVersion, canvasId, sessionId);
+                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId);
             }
         }
 
-        private IEnumerable<CanvasUiSyncRemoteEndpoint> GetActivePeerTargets()
+        internal static IEnumerable<CanvasUiSyncRemoteEndpoint> GetActivePeerTargets(CanvasUiSync owner)
         {
-            if (profile.peerEndpoints == null)
+            if (owner.profile.peerEndpoints == null)
             {
                 yield break;
             }
 
-            foreach (var endpoint in profile.peerEndpoints)
+            foreach (var endpoint in owner.profile.peerEndpoints)
             {
-                if (IsPeerTargetActive(endpoint))
+                if (IsPeerTargetActive(owner, endpoint))
                 {
                     yield return endpoint;
                 }
             }
         }
 
-        private CanvasUiSyncRemoteEndpoint FindPeerTarget(string nodeId)
+        internal static CanvasUiSyncRemoteEndpoint FindPeerTarget(CanvasUiSync owner, string nodeId)
         {
-            if (profile.peerEndpoints == null)
+            if (owner.profile.peerEndpoints == null)
             {
                 return null;
             }
 
-            foreach (var endpoint in profile.peerEndpoints)
+            foreach (var endpoint in owner.profile.peerEndpoints)
             {
-                if (IsPeerTargetActive(endpoint) && string.Equals(endpoint.name, nodeId, StringComparison.Ordinal))
+                if (IsPeerTargetActive(owner, endpoint) && string.Equals(endpoint.name, nodeId, StringComparison.Ordinal))
                 {
                     return endpoint;
                 }
@@ -145,86 +202,86 @@ namespace Mizotake.UnityUiSync
             return null;
         }
 
-        private void TickNodeTimeout(float now)
+        internal static void TickNodeTimeout(CanvasUiSync owner, float now)
         {
-            expiredNodeIds.Clear();
-            foreach (var node in nodes.Values)
+            owner.expiredNodeIds.Clear();
+            foreach (var node in owner.nodes.Values)
             {
-                if (now - node.LastSeenAt > Mathf.Max(0.1f, profile.nodeTimeoutSeconds))
+                if (now - node.LastSeenAt > Mathf.Max(0.1f, owner.profile.nodeTimeoutSeconds))
                 {
-                    expiredNodeIds.Add(node.NodeId);
+                    owner.expiredNodeIds.Add(node.NodeId);
                 }
             }
 
-            foreach (var nodeId in expiredNodeIds)
+            foreach (var nodeId in owner.expiredNodeIds)
             {
-                nodes.Remove(nodeId);
-                Debug.LogWarning("CanvasUiSync peer leave: " + nodeId + " canvas=" + canvasId, this);
+                owner.nodes.Remove(nodeId);
+                Debug.LogWarning("CanvasUiSync peer leave: " + nodeId + " canvas=" + owner.canvasId, owner);
             }
 
-            expiredNodeIds.Clear();
+            owner.expiredNodeIds.Clear();
         }
 
-        private void SendSnapshot(CanvasUiSync target)
+        internal static void SendSnapshot(CanvasUiSync owner, CanvasUiSync target)
         {
-            SendSnapshotCore(values => target.HandleBeginSnapshot(values), values => target.HandleSnapshotState(values), values => target.HandleEndSnapshot(values));
+            owner.SendSnapshotCore(values => target.HandleBeginSnapshot(values), values => target.HandleSnapshotState(values), values => target.HandleEndSnapshot(values));
         }
 
-        private void SendSnapshot(string ipAddress, int port)
+        internal static void SendSnapshot(CanvasUiSync owner, string ipAddress, int port)
         {
-            SendSnapshotCore(values => SendTo(ipAddress, port, BeginSnapshotAddress, values), values => SendTo(ipAddress, port, SnapshotStateAddress, values), values => SendTo(ipAddress, port, EndSnapshotAddress, values));
+            owner.SendSnapshotCore(values => owner.SendTo(ipAddress, port, CanvasUiSync.BeginSnapshotAddress, values), values => owner.SendTo(ipAddress, port, CanvasUiSync.SnapshotStateAddress, values), values => owner.SendTo(ipAddress, port, CanvasUiSync.EndSnapshotAddress, values));
         }
 
-        private void SendSnapshotCore(Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
+        internal static void SendSnapshotCore(CanvasUiSync owner, Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
         {
             var snapshotId = Guid.NewGuid().ToString("N");
-            sendBegin(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
-            foreach (var values in EnumerateSnapshotStateValues(snapshotId))
+            sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+            foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
             {
                 sendState(values);
             }
 
-            sendEnd(new object[] { snapshotId, canvasId, profile.nodeId, sessionId });
-            Debug.Log("CanvasUiSync snapshot served: " + canvasId + " snapshotId=" + snapshotId, this);
+            sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+            Debug.Log("CanvasUiSync snapshot served: " + owner.canvasId + " snapshotId=" + snapshotId, owner);
         }
 
-        private IEnumerable<object[]> EnumerateSnapshotStateValues(string snapshotId)
+        internal static IEnumerable<object[]> EnumerateSnapshotStateValues(CanvasUiSync owner, string snapshotId)
         {
-            foreach (var pair in bindings)
+            foreach (var pair in owner.bindings)
             {
-                if (pair.Value.ValueType != "Button" && localStates.TryGetValue(pair.Key, out var state))
+                if (pair.Value.ValueType != "Button" && owner.localStates.TryGetValue(pair.Key, out var state))
                 {
-                    yield return new object[] { snapshotId, canvasId, pair.Key, pair.Value.ValueType, SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId, state.Stamp.Sequence };
+                    yield return new object[] { snapshotId, owner.canvasId, pair.Key, pair.Value.ValueType, owner.SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId, state.Stamp.Sequence };
                 }
             }
         }
 
-        private void BroadcastCommit(string syncId, string valueType, object value, StateStamp stamp)
+        internal static void BroadcastCommit(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp)
         {
-            foreach (var endpoint in GetActivePeerTargets())
+            foreach (var endpoint in owner.GetActivePeerTargets())
             {
-                SendTo(endpoint.ipAddress, endpoint.port, CommitStateAddress, profile.nodeId, sessionId, canvasId, syncId, valueType, SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitStateAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, valueType, owner.SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
             }
         }
 
-        private void BroadcastButton(string syncId, StateStamp stamp)
+        internal static void BroadcastButton(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
         {
-            foreach (var endpoint in GetActivePeerTargets())
+            foreach (var endpoint in owner.GetActivePeerTargets())
             {
-                SendTo(endpoint.ipAddress, endpoint.port, CommitButtonAddress, profile.nodeId, sessionId, canvasId, syncId, SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitButtonAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
             }
         }
 
-        private bool HasActivePeerTarget()
+        internal static bool HasActivePeerTarget(CanvasUiSync owner)
         {
-            if (profile.peerEndpoints == null)
+            if (owner.profile.peerEndpoints == null)
             {
                 return false;
             }
 
-            foreach (var endpoint in profile.peerEndpoints)
+            foreach (var endpoint in owner.profile.peerEndpoints)
             {
-                if (IsPeerTargetActive(endpoint))
+                if (IsPeerTargetActive(owner, endpoint))
                 {
                     return true;
                 }
@@ -233,25 +290,25 @@ namespace Mizotake.UnityUiSync
             return false;
         }
 
-        private bool IsPeerTargetActive(CanvasUiSyncRemoteEndpoint endpoint)
+        internal static bool IsPeerTargetActive(CanvasUiSync owner, CanvasUiSyncRemoteEndpoint endpoint)
         {
-            return endpoint != null && endpoint.enabled && endpoint.port > 0 && !string.IsNullOrWhiteSpace(endpoint.ipAddress) && !string.Equals(endpoint.name, profile.nodeId, StringComparison.Ordinal);
+            return endpoint != null && endpoint.enabled && endpoint.port > 0 && !string.IsNullOrWhiteSpace(endpoint.ipAddress) && !string.Equals(endpoint.name, owner.profile.nodeId, StringComparison.Ordinal);
         }
 
-        private void SendTo(string ipAddress, int port, string address, params object[] values)
+        internal static void SendTo(CanvasUiSync owner, string ipAddress, int port, string address, params object[] values)
         {
-            if (client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
+            if (owner.client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
             {
-                client.address = ipAddress;
-                client.port = port;
-                client.Send(address, values);
-                sentMessageCount++;
-                sentValueCount += values.Length;
-                sentApproxBytes += EstimatePayloadBytes(address, values);
+                owner.client.address = ipAddress;
+                owner.client.port = port;
+                owner.client.Send(address, values);
+                owner.sentMessageCount++;
+                owner.sentValueCount += values.Length;
+                owner.sentApproxBytes += EstimatePayloadBytes(address, values);
             }
         }
 
-        private static long EstimatePayloadBytes(string address, object[] values)
+        internal static long EstimatePayloadBytes(string address, object[] values)
         {
             var bytes = string.IsNullOrEmpty(address) ? 0 : address.Length;
             for (var index = 0; index < values.Length; index++)
@@ -275,7 +332,7 @@ namespace Mizotake.UnityUiSync
             return bytes;
         }
 
-        private static string SerializeLogicalTicks(long logicalTicks)
+        internal static string SerializeLogicalTicks(long logicalTicks)
         {
             return logicalTicks.ToString(CultureInfo.InvariantCulture);
         }

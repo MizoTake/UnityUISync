@@ -1,142 +1,8 @@
-using System;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace Mizotake.UnityUiSync
 {
-    public sealed partial class CanvasUiSync
-    {
-        private sealed class NodeState
-        {
-            public NodeState(string nodeId, string sessionId, float lastSeenAt)
-            {
-                NodeId = nodeId;
-                SessionId = sessionId;
-                LastSeenAt = lastSeenAt;
-            }
-
-            public string NodeId { get; }
-            public string SessionId { get; set; }
-            public float LastSeenAt { get; set; }
-        }
-
-        private sealed class LocalStateRecord
-        {
-            public LocalStateRecord(object value, string valueType, StateStamp stamp)
-            {
-                Value = value;
-                ValueType = valueType;
-                Stamp = stamp;
-                PendingValue = value;
-                PendingStamp = stamp;
-            }
-
-            public object Value { get; set; }
-            public string ValueType { get; }
-            public StateStamp Stamp { get; set; }
-            public float LastBroadcastAt { get; set; }
-            public float NextBroadcastAt { get; set; }
-            public bool HasPendingBroadcast { get; set; }
-            public object PendingValue { get; set; }
-            public StateStamp PendingStamp { get; set; }
-        }
-
-        private readonly struct StateStamp
-        {
-            public StateStamp(long logicalTicks, string nodeId, int sequence)
-            {
-                LogicalTicks = logicalTicks;
-                NodeId = nodeId;
-                Sequence = sequence;
-            }
-
-            public long LogicalTicks { get; }
-            public string NodeId { get; }
-            public int Sequence { get; }
-        }
-
-        private sealed class UiSyncBinding : IDisposable
-        {
-            public UiSyncBinding(Component component, string syncId, string valueType, Func<object> readValue, Action<object> applyValue, bool isContinuous)
-            {
-                Component = component;
-                SyncId = syncId;
-                ValueType = valueType;
-                this.readValue = readValue;
-                this.applyValue = applyValue;
-                IsContinuous = isContinuous;
-            }
-
-            private readonly Func<object> readValue;
-            private readonly Action<object> applyValue;
-            public Component Component { get; }
-            public string SyncId { get; }
-            public string ValueType { get; }
-            public bool IsContinuous { get; }
-            public bool IsInteracting { get; set; }
-            public Action Unsubscribe { get; set; }
-
-            public object ReadValue()
-            {
-                return readValue == null ? null : readValue();
-            }
-
-            public void ApplyValue(object value)
-            {
-                applyValue?.Invoke(value);
-            }
-
-            public void Dispose()
-            {
-                Unsubscribe?.Invoke();
-            }
-        }
-
-        private readonly struct DeferredStateCommit
-        {
-            public DeferredStateCommit(string valueType, object value, StateStamp stamp, float receivedAt = 0f)
-            {
-                ValueType = valueType;
-                Value = value;
-                Stamp = stamp;
-                ReceivedAt = receivedAt;
-            }
-
-            public string ValueType { get; }
-            public object Value { get; }
-            public StateStamp Stamp { get; }
-            public float ReceivedAt { get; }
-        }
-
-        private readonly struct PendingButtonCommit
-        {
-            public PendingButtonCommit(StateStamp stamp, float receivedAt)
-            {
-                Stamp = stamp;
-                ReceivedAt = receivedAt;
-            }
-
-            public StateStamp Stamp { get; }
-            public float ReceivedAt { get; }
-        }
-
-        private readonly struct SuppressionScope : IDisposable
-        {
-            private readonly CanvasUiSync owner;
-
-            public SuppressionScope(CanvasUiSync owner)
-            {
-                this.owner = owner;
-                owner.suppressionCount++;
-            }
-
-            public void Dispose()
-            {
-                owner.suppressionCount = Mathf.Max(0, owner.suppressionCount - 1);
-            }
-        }
-    }
-
     public sealed class CanvasUiSyncSamplePresenter : MonoBehaviour
     {
         public Toggle powerToggle;
@@ -373,7 +239,7 @@ namespace Mizotake.UnityUiSync
 
             if (operatorInput != null)
             {
-                if (!hasCachedState || !string.Equals(lastOperatorText, operatorInput.text, StringComparison.Ordinal))
+                if (!hasCachedState || !string.Equals(lastOperatorText, operatorInput.text, System.StringComparison.Ordinal))
                 {
                     lastOperatorText = operatorInput.text;
                     OnOperatorInputChanged(operatorInput.text);

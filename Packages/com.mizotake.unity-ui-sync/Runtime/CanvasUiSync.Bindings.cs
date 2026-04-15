@@ -10,95 +10,95 @@ using UnityEngine.UI;
 
 namespace Mizotake.UnityUiSync
 {
-    public sealed partial class CanvasUiSync
+    internal static class CanvasUiSyncBindingsService
     {
-        private void ScanBindings()
+        internal static void ScanBindings(CanvasUiSync owner)
         {
-            foreach (var binding in bindings.Values)
+            foreach (var binding in owner.bindings.Values)
             {
                 binding.Dispose();
             }
 
-            bindings.Clear();
-            RegisterToggles();
-            RegisterSliders();
-            RegisterScrollbars();
-            RegisterDropdowns();
-            RegisterTmpDropdowns();
-            RegisterInputFields();
-            RegisterTmpInputFields();
-            RegisterButtons();
-            registryHash = ComputeRegistryHash();
+            owner.bindings.Clear();
+            RegisterToggles(owner);
+            RegisterSliders(owner);
+            RegisterScrollbars(owner);
+            RegisterDropdowns(owner);
+            RegisterTmpDropdowns(owner);
+            RegisterInputFields(owner);
+            RegisterTmpInputFields(owner);
+            RegisterButtons(owner);
+            owner.registryHash = ComputeRegistryHash(owner);
         }
 
-        private void RegisterToggles()
+        internal static void RegisterToggles(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<Toggle>(true))
+            foreach (var component in owner.GetComponentsInChildren<Toggle>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "Toggle"), "Toggle", () => component.isOn, value => component.SetIsOnWithoutNotify(Convert.ToBoolean(value)), false);
-                UnityEngine.Events.UnityAction<bool> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Toggle"), "Toggle", () => component.isOn, value => component.SetIsOnWithoutNotify(Convert.ToBoolean(value)), false);
+                UnityEngine.Events.UnityAction<bool> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterSliders()
+        internal static void RegisterSliders(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<Slider>(true))
+            foreach (var component in owner.GetComponentsInChildren<Slider>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "Slider"), "Slider", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
-                UnityEngine.Events.UnityAction<float> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Slider"), "Slider", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
+                UnityEngine.Events.UnityAction<float> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterScrollbars()
+        internal static void RegisterScrollbars(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<Scrollbar>(true))
+            foreach (var component in owner.GetComponentsInChildren<Scrollbar>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "Scrollbar"), "Scrollbar", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
-                UnityEngine.Events.UnityAction<float> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Scrollbar"), "Scrollbar", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
+                UnityEngine.Events.UnityAction<float> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterDropdowns()
+        internal static void RegisterDropdowns(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<Dropdown>(true))
+            foreach (var component in owner.GetComponentsInChildren<Dropdown>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "Dropdown"), "Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
-                UnityEngine.Events.UnityAction<int> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Dropdown"), "Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
+                UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterTmpDropdowns()
+        internal static void RegisterTmpDropdowns(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<TMP_Dropdown>(true))
+            foreach (var component in owner.GetComponentsInChildren<TMP_Dropdown>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
-                UnityEngine.Events.UnityAction<int> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", () => component.value, value => component.SetValueWithoutNotify(Convert.ToInt32(value)), false);
+                UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterInputFields()
+        internal static void RegisterInputFields(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<InputField>(true))
+            foreach (var component in owner.GetComponentsInChildren<InputField>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "InputField"), "InputField", () => component.text, value => component.SetTextWithoutNotify(Convert.ToString(value)), false);
-                UnityEngine.Events.UnityAction<string> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "InputField"), "InputField", () => component.text, value => component.SetTextWithoutNotify(Convert.ToString(value)), false);
+                UnityEngine.Events.UnityAction<string> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => { component.onEndEdit.RemoveListener(listener); component.onValueChanged.RemoveListener(listener); };
-                if (profile.stringSendMode == CanvasUiSyncStringSendMode.OnValueChanged)
+                if (owner.profile.stringSendMode == CanvasUiSyncStringSendMode.OnValueChanged)
                 {
                     component.onValueChanged.AddListener(listener);
                 }
@@ -107,18 +107,18 @@ namespace Mizotake.UnityUiSync
                     component.onEndEdit.AddListener(listener);
                 }
 
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterTmpInputFields()
+        internal static void RegisterTmpInputFields(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<TMP_InputField>(true))
+            foreach (var component in owner.GetComponentsInChildren<TMP_InputField>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "TMP_InputField"), "TMP_InputField", () => component.text, value => component.SetTextWithoutNotify(Convert.ToString(value)), false);
-                UnityEngine.Events.UnityAction<string> listener = value => OnLocalStateChanged(binding, value, false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "TMP_InputField"), "TMP_InputField", () => component.text, value => component.SetTextWithoutNotify(Convert.ToString(value)), false);
+                UnityEngine.Events.UnityAction<string> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => { component.onEndEdit.RemoveListener(listener); component.onValueChanged.RemoveListener(listener); };
-                if (profile.stringSendMode == CanvasUiSyncStringSendMode.OnValueChanged)
+                if (owner.profile.stringSendMode == CanvasUiSyncStringSendMode.OnValueChanged)
                 {
                     component.onValueChanged.AddListener(listener);
                 }
@@ -127,27 +127,27 @@ namespace Mizotake.UnityUiSync
                     component.onEndEdit.AddListener(listener);
                 }
 
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterButtons()
+        internal static void RegisterButtons(CanvasUiSync owner)
         {
-            foreach (var component in GetComponentsInChildren<Button>(true))
+            foreach (var component in owner.GetComponentsInChildren<Button>(true))
             {
-                var binding = new UiSyncBinding(component, BuildSyncId(component.transform, "Button"), "Button", null, null, false);
-                UnityEngine.Events.UnityAction listener = () => OnLocalButtonClicked(binding);
+                var binding = new CanvasUiSync.UiSyncBinding(component, owner.BuildSyncId(component.transform, "Button"), "Button", null, null, false);
+                UnityEngine.Events.UnityAction listener = () => owner.OnLocalButtonClicked(binding);
                 binding.Unsubscribe = () => component.onClick.RemoveListener(listener);
                 component.onClick.AddListener(listener);
-                RegisterBinding(binding);
+                owner.RegisterBinding(binding);
             }
         }
 
-        private void RegisterBinding(UiSyncBinding binding)
+        internal static void RegisterBinding(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding)
         {
-            if (bindings.ContainsKey(binding.SyncId))
+            if (owner.bindings.ContainsKey(binding.SyncId))
             {
-                if (profile.logDuplicateSyncId)
+                if (owner.profile.logDuplicateSyncId)
                 {
                     Debug.LogError("Duplicate syncId detected: " + binding.SyncId, binding.Component);
                 }
@@ -156,34 +156,34 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            bindings.Add(binding.SyncId, binding);
+            owner.bindings.Add(binding.SyncId, binding);
         }
 
-        private string BuildSyncId(Transform target, string componentType)
+        internal static string BuildSyncId(CanvasUiSync owner, Transform target, string componentType)
         {
             var bindingId = ReadExplicitBindingId(target);
             if (!string.IsNullOrWhiteSpace(bindingId))
             {
-                return canvasId + "/" + bindingId + ":" + componentType;
+                return owner.canvasId + "/" + bindingId + ":" + componentType;
             }
 
-            return canvasId + "/" + BuildPath(target) + ":" + componentType;
+            return owner.canvasId + "/" + BuildPath(owner, target) + ":" + componentType;
         }
 
-        private string BuildPath(Transform target)
+        internal static string BuildPath(CanvasUiSync owner, Transform target)
         {
             var stack = new Stack<string>();
             var current = target;
-            while (current != null && current != transform)
+            while (current != null && current != owner.transform)
             {
                 stack.Push(current.name);
                 current = current.parent;
             }
 
-            return stack.Count == 0 ? transform.name : string.Join("/", stack.ToArray());
+            return stack.Count == 0 ? owner.transform.name : string.Join("/", stack.ToArray());
         }
 
-        private static string ReadExplicitBindingId(Component target)
+        internal static string ReadExplicitBindingId(Component target)
         {
             var bindingIdType = typeof(CanvasUiSync).Assembly.GetType("Mizotake.UnityUiSync.CanvasUiSyncBindingId");
             if (bindingIdType == null)
@@ -206,11 +206,11 @@ namespace Mizotake.UnityUiSync
             return property.GetValue(bindingId) as string;
         }
 
-        private string ComputeRegistryHash()
+        internal static string ComputeRegistryHash(CanvasUiSync owner)
         {
             using (var sha = SHA256.Create())
             {
-                var source = string.Join("|", bindings.OrderBy(pair => pair.Key).Select(pair => pair.Key + ":" + pair.Value.ValueType));
+                var source = string.Join("|", owner.bindings.OrderBy(pair => pair.Key).Select(pair => pair.Key + ":" + pair.Value.ValueType));
                 var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(source));
                 var builder = new StringBuilder(16);
                 for (var index = 0; index < 8 && index < bytes.Length; index++)
@@ -222,87 +222,87 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private void ApplyValueToBinding(UiSyncBinding binding, object value)
+        internal static void ApplyValueToBinding(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value)
         {
-            using (new SuppressionScope(this))
+            using (new CanvasUiSync.SuppressionScope(owner))
             {
                 binding.ApplyValue(value);
             }
         }
 
-        private void TickRuntimeHierarchyRescan(float now)
+        internal static void TickRuntimeHierarchyRescan(CanvasUiSync owner, float now)
         {
-            if (now < nextHierarchyRescanTime)
+            if (now < owner.nextHierarchyRescanTime)
             {
                 return;
             }
 
-            nextHierarchyRescanTime = now + RuntimeHierarchyRescanIntervalSeconds;
-            RefreshBindingsIfHierarchyChanged(false);
+            owner.nextHierarchyRescanTime = now + CanvasUiSync.RuntimeHierarchyRescanIntervalSeconds;
+            owner.RefreshBindingsIfHierarchyChanged(false);
         }
 
-        private bool TryRefreshBindingsForSyncId(string syncId)
+        internal static bool TryRefreshBindingsForSyncId(CanvasUiSync owner, string syncId)
         {
-            if (bindings.ContainsKey(syncId))
+            if (owner.bindings.ContainsKey(syncId))
             {
                 return true;
             }
 
-            RefreshBindingsIfHierarchyChanged(true);
-            return bindings.ContainsKey(syncId);
+            owner.RefreshBindingsIfHierarchyChanged(true);
+            return owner.bindings.ContainsKey(syncId);
         }
 
-        private void RefreshBindingsIfHierarchyChanged(bool force)
+        internal static void RefreshBindingsIfHierarchyChanged(CanvasUiSync owner, bool force)
         {
-            var signature = ComputeBindingHierarchySignature();
-            if (!force && signature == bindingHierarchySignature)
+            var signature = ComputeBindingHierarchySignature(owner);
+            if (!force && signature == owner.bindingHierarchySignature)
             {
                 return;
             }
 
-            var previousRegistryHash = registryHash;
-            ScanBindings();
-            InitializeLocalState();
-            bindingHierarchySignature = ComputeBindingHierarchySignature();
-            if (!initialized || string.Equals(previousRegistryHash, registryHash, StringComparison.Ordinal))
+            var previousRegistryHash = owner.registryHash;
+            owner.ScanBindings();
+            owner.InitializeLocalState();
+            owner.bindingHierarchySignature = ComputeBindingHierarchySignature(owner);
+            if (!owner.initialized || string.Equals(previousRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
                 return;
             }
 
-            hasSnapshot = false;
-            snapshotRetryCount = 0;
-            nextSnapshotRequestTime = Time.unscaledTime;
-            snapshotCooldownUntil = 0f;
-            SendHello();
-            RequestSnapshotIfNeeded(true);
+            owner.hasSnapshot = false;
+            owner.snapshotRetryCount = 0;
+            owner.nextSnapshotRequestTime = Time.unscaledTime;
+            owner.snapshotCooldownUntil = 0f;
+            owner.SendHello();
+            owner.RequestSnapshotIfNeeded(true);
         }
 
-        private int ComputeBindingHierarchySignature()
+        internal static int ComputeBindingHierarchySignature(CanvasUiSync owner)
         {
             unchecked
             {
                 var hash = 17;
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Toggle>(true), "Toggle");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Slider>(true), "Slider");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Scrollbar>(true), "Scrollbar");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Dropdown>(true), "Dropdown");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<TMP_Dropdown>(true), "TMP_Dropdown");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<InputField>(true), "InputField");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField");
-                AppendBindingHierarchySignature(ref hash, GetComponentsInChildren<Button>(true), "Button");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Toggle>(true), "Toggle");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Slider>(true), "Slider");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Scrollbar>(true), "Scrollbar");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Dropdown>(true), "Dropdown");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_Dropdown>(true), "TMP_Dropdown");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<InputField>(true), "InputField");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<TMP_InputField>(true), "TMP_InputField");
+                owner.AppendBindingHierarchySignature(ref hash, owner.GetComponentsInChildren<Button>(true), "Button");
                 return hash;
             }
         }
 
-        private void AppendBindingHierarchySignature<TComponent>(ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component
+        internal static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component
         {
             foreach (var component in components)
             {
-                hash = (hash * 31) + ComputeStableHash(BuildSyncId(component.transform, componentType));
+                hash = (hash * 31) + ComputeStableHash(owner.BuildSyncId(component.transform, componentType));
             }
         }
 
-        private static int ComputeStableHash(string value)
+        internal static int ComputeStableHash(string value)
         {
             unchecked
             {
@@ -322,3 +322,7 @@ namespace Mizotake.UnityUiSync
         }
     }
 }
+
+
+
+

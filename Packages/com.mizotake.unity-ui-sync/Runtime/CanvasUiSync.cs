@@ -7,67 +7,197 @@ namespace Mizotake.UnityUiSync
 {
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Canvas))]
-    public sealed partial class CanvasUiSync : MonoBehaviour
+    public sealed class CanvasUiSync : MonoBehaviour
     {
-        private const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
-        private const float PendingRemoteCommitTimeoutSeconds = 30f;
-        private const string HelloAddress = "/uisync/hello";
-        private const string RequestSnapshotAddress = "/uisync/requestSnapshot";
-        private const string BeginSnapshotAddress = "/uisync/beginSnapshot";
-        private const string SnapshotStateAddress = "/uisync/snapshotState";
-        private const string EndSnapshotAddress = "/uisync/endSnapshot";
-        private const string ProposeStateAddress = "/uisync/proposeState";
-        private const string CommitStateAddress = "/uisync/commitState";
-        private const string ProposeButtonAddress = "/uisync/proposeButton";
-        private const string CommitButtonAddress = "/uisync/commitButton";
-        private const string TransportHostName = "__CanvasUiSyncTransport";
+        internal const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
+        internal const float PendingRemoteCommitTimeoutSeconds = 30f;
+        internal const string HelloAddress = "/uisync/hello";
+        internal const string RequestSnapshotAddress = "/uisync/requestSnapshot";
+        internal const string BeginSnapshotAddress = "/uisync/beginSnapshot";
+        internal const string SnapshotStateAddress = "/uisync/snapshotState";
+        internal const string EndSnapshotAddress = "/uisync/endSnapshot";
+        internal const string ProposeStateAddress = "/uisync/proposeState";
+        internal const string CommitStateAddress = "/uisync/commitState";
+        internal const string ProposeButtonAddress = "/uisync/proposeButton";
+        internal const string CommitButtonAddress = "/uisync/commitButton";
+        internal const string TransportHostName = "__CanvasUiSyncTransport";
 
-        [SerializeField] private CanvasUiSyncProfile profile;
-        [SerializeField] private string canvasIdOverride = string.Empty;
-        [SerializeField] private bool rescanOnEnable;
+        [SerializeField] internal CanvasUiSyncProfile profile;
+        [SerializeField] internal string canvasIdOverride = string.Empty;
+        [SerializeField] internal bool rescanOnEnable;
 
-        private readonly Dictionary<string, UiSyncBinding> bindings = new Dictionary<string, UiSyncBinding>();
-        private readonly Dictionary<string, NodeState> nodes = new Dictionary<string, NodeState>();
-        private readonly Dictionary<string, LocalStateRecord> localStates = new Dictionary<string, LocalStateRecord>();
-        private readonly Dictionary<string, StateStamp> latestAppliedButtonStamps = new Dictionary<string, StateStamp>();
-        private readonly Dictionary<string, object> lastProposedValues = new Dictionary<string, object>();
-        private readonly Dictionary<string, float> lastProposeTimes = new Dictionary<string, float>();
-        private readonly Dictionary<string, DeferredStateCommit> deferredCommits = new Dictionary<string, DeferredStateCommit>();
-        private readonly Dictionary<string, DeferredStateCommit> pendingRemoteCommits = new Dictionary<string, DeferredStateCommit>();
-        private readonly Dictionary<string, PendingButtonCommit> pendingRemoteButtonCommits = new Dictionary<string, PendingButtonCommit>();
-        private readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
-        private readonly List<string> stateCacheKeysToRemove = new List<string>();
-        private readonly List<string> expiredSnapshotIds = new List<string>();
-        private readonly List<string> expiredNodeIds = new List<string>();
-        private string registryHash = string.Empty;
-        private string canvasId = string.Empty;
-        private string sessionId = string.Empty;
-        private float nextHelloTime;
-        private float nextSnapshotRequestTime;
-        private float nextPeriodicResyncTime;
-        private float nextStatisticsLogTime;
-        private float nextHierarchyRescanTime;
-        private float snapshotCooldownUntil;
-        private int snapshotRetryCount;
-        private int suppressionCount;
-        private int localSequence;
-        private long logicalTicks;
-        private int sentMessageCount;
-        private int receivedMessageCount;
-        private int sentValueCount;
-        private int receivedValueCount;
-        private long sentApproxBytes;
-        private long receivedApproxBytes;
-        private int lastGcCollectionCount0;
-        private int lastGcCollectionCount1;
-        private int lastGcCollectionCount2;
-        private int bindingHierarchySignature;
-        private bool initialized;
-        private bool hasSnapshot;
-        private uOscServer server;
-        private uOscClient client;
-        private Canvas canvasComponent;
-        private GameObject transportHost;
+        internal readonly Dictionary<string, UiSyncBinding> bindings = new Dictionary<string, UiSyncBinding>();
+        internal readonly Dictionary<string, NodeState> nodes = new Dictionary<string, NodeState>();
+        internal readonly Dictionary<string, LocalStateRecord> localStates = new Dictionary<string, LocalStateRecord>();
+        internal readonly Dictionary<string, StateStamp> latestAppliedButtonStamps = new Dictionary<string, StateStamp>();
+        internal readonly Dictionary<string, object> lastProposedValues = new Dictionary<string, object>();
+        internal readonly Dictionary<string, float> lastProposeTimes = new Dictionary<string, float>();
+        internal readonly Dictionary<string, DeferredStateCommit> deferredCommits = new Dictionary<string, DeferredStateCommit>();
+        internal readonly Dictionary<string, DeferredStateCommit> pendingRemoteCommits = new Dictionary<string, DeferredStateCommit>();
+        internal readonly Dictionary<string, PendingButtonCommit> pendingRemoteButtonCommits = new Dictionary<string, PendingButtonCommit>();
+        internal readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
+        internal readonly List<string> stateCacheKeysToRemove = new List<string>();
+        internal readonly List<string> expiredSnapshotIds = new List<string>();
+        internal readonly List<string> expiredNodeIds = new List<string>();
+        internal string registryHash = string.Empty;
+        internal string canvasId = string.Empty;
+        internal string sessionId = string.Empty;
+        internal float nextHelloTime;
+        internal float nextSnapshotRequestTime;
+        internal float nextPeriodicResyncTime;
+        internal float nextStatisticsLogTime;
+        internal float nextHierarchyRescanTime;
+        internal float snapshotCooldownUntil;
+        internal int snapshotRetryCount;
+        internal int suppressionCount;
+        internal int localSequence;
+        internal long logicalTicks;
+        internal int sentMessageCount;
+        internal int receivedMessageCount;
+        internal int sentValueCount;
+        internal int receivedValueCount;
+        internal long sentApproxBytes;
+        internal long receivedApproxBytes;
+        internal int lastGcCollectionCount0;
+        internal int lastGcCollectionCount1;
+        internal int lastGcCollectionCount2;
+        internal int bindingHierarchySignature;
+        internal bool initialized;
+        internal bool hasSnapshot;
+        internal uOscServer server;
+        internal uOscClient client;
+        internal Canvas canvasComponent;
+        internal GameObject transportHost;
+
+        internal sealed class NodeState
+        {
+            public NodeState(string nodeId, string sessionId, float lastSeenAt)
+            {
+                NodeId = nodeId;
+                SessionId = sessionId;
+                LastSeenAt = lastSeenAt;
+            }
+
+            public string NodeId { get; }
+            public string SessionId { get; set; }
+            public float LastSeenAt { get; set; }
+        }
+
+        internal sealed class LocalStateRecord
+        {
+            public LocalStateRecord(object value, string valueType, StateStamp stamp)
+            {
+                Value = value;
+                ValueType = valueType;
+                Stamp = stamp;
+                PendingValue = value;
+                PendingStamp = stamp;
+            }
+
+            public object Value { get; set; }
+            public string ValueType { get; }
+            public StateStamp Stamp { get; set; }
+            public float LastBroadcastAt { get; set; }
+            public float NextBroadcastAt { get; set; }
+            public bool HasPendingBroadcast { get; set; }
+            public object PendingValue { get; set; }
+            public StateStamp PendingStamp { get; set; }
+        }
+
+        internal readonly struct StateStamp
+        {
+            public StateStamp(long logicalTicks, string nodeId, int sequence)
+            {
+                LogicalTicks = logicalTicks;
+                NodeId = nodeId;
+                Sequence = sequence;
+            }
+
+            public long LogicalTicks { get; }
+            public string NodeId { get; }
+            public int Sequence { get; }
+        }
+
+        internal sealed class UiSyncBinding : IDisposable
+        {
+            public UiSyncBinding(Component component, string syncId, string valueType, Func<object> readValue, Action<object> applyValue, bool isContinuous)
+            {
+                Component = component;
+                SyncId = syncId;
+                ValueType = valueType;
+                this.readValue = readValue;
+                this.applyValue = applyValue;
+                IsContinuous = isContinuous;
+            }
+
+            private readonly Func<object> readValue;
+            private readonly Action<object> applyValue;
+            public Component Component { get; }
+            public string SyncId { get; }
+            public string ValueType { get; }
+            public bool IsContinuous { get; }
+            public bool IsInteracting { get; set; }
+            public Action Unsubscribe { get; set; }
+
+            public object ReadValue()
+            {
+                return readValue == null ? null : readValue();
+            }
+
+            public void ApplyValue(object value)
+            {
+                applyValue?.Invoke(value);
+            }
+
+            public void Dispose()
+            {
+                Unsubscribe?.Invoke();
+            }
+        }
+
+        internal readonly struct DeferredStateCommit
+        {
+            public DeferredStateCommit(string valueType, object value, StateStamp stamp, float receivedAt = 0f)
+            {
+                ValueType = valueType;
+                Value = value;
+                Stamp = stamp;
+                ReceivedAt = receivedAt;
+            }
+
+            public string ValueType { get; }
+            public object Value { get; }
+            public StateStamp Stamp { get; }
+            public float ReceivedAt { get; }
+        }
+
+        internal readonly struct PendingButtonCommit
+        {
+            public PendingButtonCommit(StateStamp stamp, float receivedAt)
+            {
+                Stamp = stamp;
+                ReceivedAt = receivedAt;
+            }
+
+            public StateStamp Stamp { get; }
+            public float ReceivedAt { get; }
+        }
+
+        internal readonly struct SuppressionScope : IDisposable
+        {
+            private readonly CanvasUiSync owner;
+
+            public SuppressionScope(CanvasUiSync owner)
+            {
+                this.owner = owner;
+                owner.suppressionCount++;
+            }
+
+            public void Dispose()
+            {
+                owner.suppressionCount = Mathf.Max(0, owner.suppressionCount - 1);
+            }
+        }
 
         private void Awake()
         {
@@ -153,106 +283,23 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private void InitializeTransport()
+        internal void InitializeTransport()
         {
-            server = GetComponent<uOscServer>();
-            client = GetComponent<uOscClient>();
-            GameObject configuredTransportHost = null;
-            if (server == null || client == null)
-            {
-                configuredTransportHost = GetOrCreateTransportHost();
-                if (configuredTransportHost.activeSelf)
-                {
-                    configuredTransportHost.SetActive(false);
-                }
-
-                if (server == null)
-                {
-                    server = configuredTransportHost.GetComponent<uOscServer>() ?? configuredTransportHost.AddComponent<uOscServer>();
-                }
-
-                if (client == null)
-                {
-                    client = configuredTransportHost.GetComponent<uOscClient>() ?? configuredTransportHost.AddComponent<uOscClient>();
-                }
-            }
-
-            server.port = profile.listenPort;
-            server.autoStart = true;
-            server.onDataReceived.RemoveListener(OnOscMessageReceived);
-            server.onDataReceived.AddListener(OnOscMessageReceived);
-            client.address = "127.0.0.1";
-            client.port = profile.listenPort;
-            if (configuredTransportHost != null)
-            {
-                configuredTransportHost.SetActive(true);
-            }
+            CanvasUiSyncTransportService.InitializeTransport(this);
         }
 
-        private GameObject GetOrCreateTransportHost()
+        internal GameObject GetOrCreateTransportHost()
         {
-            if (transportHost != null)
-            {
-                return transportHost;
-            }
-
-            var existingHost = transform.Find(TransportHostName);
-            if (existingHost != null)
-            {
-                transportHost = existingHost.gameObject;
-                return transportHost;
-            }
-
-            transportHost = new GameObject(TransportHostName);
-            transportHost.hideFlags = HideFlags.HideInHierarchy;
-            transportHost.transform.SetParent(transform, false);
-            transportHost.SetActive(false);
-            return transportHost;
+            return CanvasUiSyncTransportService.GetOrCreateTransportHost(this);
         }
 
-        private void InitializeLocalState()
+        internal void InitializeLocalState()
         {
-            var previousLocalStates = new Dictionary<string, LocalStateRecord>(localStates);
-            var previousButtonStamps = new Dictionary<string, StateStamp>(latestAppliedButtonStamps);
-            localStates.Clear();
-            latestAppliedButtonStamps.Clear();
-            foreach (var pair in bindings)
-            {
-                if (pair.Value.ValueType == "Button")
-                {
-                    if (previousButtonStamps.TryGetValue(pair.Key, out var stamp))
-                    {
-                        latestAppliedButtonStamps[pair.Key] = stamp;
-                    }
-
-                    continue;
-                }
-
-                var currentValue = pair.Value.ReadValue();
-                if (previousLocalStates.TryGetValue(pair.Key, out var existingState) && string.Equals(existingState.ValueType, pair.Value.ValueType, StringComparison.Ordinal))
-                {
-                    existingState.Value = currentValue;
-                    existingState.PendingValue = currentValue;
-                    localStates[pair.Key] = existingState;
-                    continue;
-                }
-
-                localStates[pair.Key] = new LocalStateRecord(currentValue, pair.Value.ValueType, default);
-            }
-
-            PruneTransientStateCaches();
-            ApplyPendingRemoteCommits();
-            ApplyPendingRemoteButtonCommits();
+            CanvasUiSyncStateService.InitializeLocalState(this);
         }
 
-        private void ApplyPendingRemoteCommits()
+        internal void ApplyPendingRemoteCommits()
         {
-            if (pendingRemoteCommits.Count == 0)
-            {
-                return;
-            }
-
-            stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteCommits)
             {
                 if (!bindings.TryGetValue(pair.Key, out var binding))
@@ -280,7 +327,7 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
         }
 
-        private void ApplyPendingRemoteButtonCommits()
+        internal void ApplyPendingRemoteButtonCommits()
         {
             if (pendingRemoteButtonCommits.Count == 0)
             {
@@ -312,7 +359,7 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
         }
 
-        private void PruneTransientStateCaches()
+        internal void PruneTransientStateCaches()
         {
             RemoveMissingBindingState(lastProposedValues);
             RemoveMissingBindingState(lastProposeTimes);
@@ -320,7 +367,7 @@ namespace Mizotake.UnityUiSync
             PrunePendingRemoteCommits();
         }
 
-        private void PrunePendingRemoteCommits()
+        internal void PrunePendingRemoteCommits()
         {
             if (pendingRemoteCommits.Count == 0 && pendingRemoteButtonCommits.Count == 0)
             {
@@ -363,7 +410,7 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
         }
 
-        private void RemoveMissingBindingState<TValue>(Dictionary<string, TValue> valuesBySyncId)
+        internal void RemoveMissingBindingState<TValue>(Dictionary<string, TValue> valuesBySyncId)
         {
             if (valuesBySyncId.Count == 0)
             {
@@ -385,6 +432,366 @@ namespace Mizotake.UnityUiSync
             }
 
             stateCacheKeysToRemove.Clear();
+        }
+
+        internal void ScanBindings()
+        {
+            CanvasUiSyncBindingsService.ScanBindings(this);
+        }
+
+        internal void RegisterToggles()
+        {
+            CanvasUiSyncBindingsService.RegisterToggles(this);
+        }
+
+        internal void RegisterSliders()
+        {
+            CanvasUiSyncBindingsService.RegisterSliders(this);
+        }
+
+        internal void RegisterScrollbars()
+        {
+            CanvasUiSyncBindingsService.RegisterScrollbars(this);
+        }
+
+        internal void RegisterDropdowns()
+        {
+            CanvasUiSyncBindingsService.RegisterDropdowns(this);
+        }
+
+        internal void RegisterTmpDropdowns()
+        {
+            CanvasUiSyncBindingsService.RegisterTmpDropdowns(this);
+        }
+
+        internal void RegisterInputFields()
+        {
+            CanvasUiSyncBindingsService.RegisterInputFields(this);
+        }
+
+        internal void RegisterTmpInputFields()
+        {
+            CanvasUiSyncBindingsService.RegisterTmpInputFields(this);
+        }
+
+        internal void RegisterButtons()
+        {
+            CanvasUiSyncBindingsService.RegisterButtons(this);
+        }
+
+        internal void RegisterBinding(UiSyncBinding binding)
+        {
+            CanvasUiSyncBindingsService.RegisterBinding(this, binding);
+        }
+
+        internal string BuildSyncId(Transform target, string componentType)
+        {
+            return CanvasUiSyncBindingsService.BuildSyncId(this, target, componentType);
+        }
+
+        internal string BuildPath(Transform target)
+        {
+            return CanvasUiSyncBindingsService.BuildPath(this, target);
+        }
+
+        internal string ReadExplicitBindingId(Component target)
+        {
+            return CanvasUiSyncBindingsService.ReadExplicitBindingId(target);
+        }
+
+        internal string ComputeRegistryHash()
+        {
+            return CanvasUiSyncBindingsService.ComputeRegistryHash(this);
+        }
+
+        internal void ApplyValueToBinding(UiSyncBinding binding, object value)
+        {
+            CanvasUiSyncBindingsService.ApplyValueToBinding(this, binding, value);
+        }
+
+        internal void TickRuntimeHierarchyRescan(float now)
+        {
+            CanvasUiSyncBindingsService.TickRuntimeHierarchyRescan(this, now);
+        }
+
+        internal bool TryRefreshBindingsForSyncId(string syncId)
+        {
+            return CanvasUiSyncBindingsService.TryRefreshBindingsForSyncId(this, syncId);
+        }
+
+        internal void RefreshBindingsIfHierarchyChanged(bool force)
+        {
+            CanvasUiSyncBindingsService.RefreshBindingsIfHierarchyChanged(this, force);
+        }
+
+        internal int ComputeBindingHierarchySignature()
+        {
+            return CanvasUiSyncBindingsService.ComputeBindingHierarchySignature(this);
+        }
+
+        internal int ComputeStableHash(string value)
+        {
+            return CanvasUiSyncBindingsService.ComputeStableHash(value);
+        }
+
+        internal void AppendBindingHierarchySignature<TComponent>(ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component
+        {
+            CanvasUiSyncBindingsService.AppendBindingHierarchySignature(this, ref hash, components, componentType);
+        }
+
+        internal void OnOscMessageReceived(Message message)
+        {
+            CanvasUiSyncProtocolService.OnOscMessageReceived(this, message);
+        }
+
+        internal void HandleReceivedPayload(string address, object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleReceivedPayload(this, address, values);
+        }
+
+        internal void RecordReceivedPayload(string address, object[] values)
+        {
+            CanvasUiSyncProtocolService.RecordReceivedPayload(this, address, values);
+        }
+
+        internal void DispatchReceivedPayload(string address, object[] values)
+        {
+            CanvasUiSyncProtocolService.DispatchReceivedPayload(this, address, values);
+        }
+
+        internal void HandleHello(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleHello(this, values);
+        }
+
+        internal void HandleRequestSnapshot(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleRequestSnapshot(this, values);
+        }
+
+        internal void HandleBeginSnapshot(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleBeginSnapshot(this, values);
+        }
+
+        internal void HandleSnapshotState(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleSnapshotState(this, values);
+        }
+
+        internal void HandleEndSnapshot(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleEndSnapshot(this, values);
+        }
+
+        internal void HandleCommitState(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleCommitState(this, values);
+        }
+
+        internal void HandleCommitButton(object[] values)
+        {
+            CanvasUiSyncProtocolService.HandleCommitButton(this, values);
+        }
+
+        internal bool ApplyButtonCommit(UiSyncBinding binding, string syncId, StateStamp stamp)
+        {
+            return CanvasUiSyncProtocolService.ApplyButtonCommit(this, binding, syncId, stamp);
+        }
+
+        internal bool IsPeerAuthorized(string nodeId)
+        {
+            return CanvasUiSyncProtocolService.IsPeerAuthorized(this, nodeId);
+        }
+
+        internal bool ShouldIgnoreIncomingPeer(string nodeId)
+        {
+            return CanvasUiSyncProtocolService.ShouldIgnoreIncomingPeer(this, nodeId);
+        }
+
+        internal StateStamp CreateLocalStamp()
+        {
+            return CanvasUiSyncProtocolService.CreateLocalStamp(this);
+        }
+
+        internal StateStamp ReadStamp(object[] values, int startIndex)
+        {
+            return CanvasUiSyncProtocolService.ReadStamp(this, values, startIndex);
+        }
+
+        internal bool TryReadStamp(object[] values, int startIndex, out StateStamp stamp)
+        {
+            return CanvasUiSyncProtocolService.TryReadStamp(this, values, startIndex, out stamp);
+        }
+
+        internal bool IsIncomingStampNewer(StateStamp current, StateStamp incoming)
+        {
+            return CanvasUiSyncProtocolService.IsIncomingStampNewer(current, incoming);
+        }
+
+        internal object SerializeValue(object value, string valueType)
+        {
+            return CanvasUiSyncProtocolService.SerializeValue(this, value, valueType);
+        }
+
+        internal object DeserializeValue(object value, string valueType)
+        {
+            return CanvasUiSyncProtocolService.DeserializeValue(this, value, valueType);
+        }
+
+        internal void HandleUnknownSyncId(string syncId)
+        {
+            CanvasUiSyncProtocolService.HandleUnknownSyncId(this, syncId);
+        }
+
+        internal void HandleTypeMismatch(string syncId, string localType, string remoteType)
+        {
+            CanvasUiSyncProtocolService.HandleTypeMismatch(this, syncId, localType, remoteType);
+        }
+
+        internal void OnLocalStateChanged(UiSyncBinding binding, object value, bool force)
+        {
+            CanvasUiSyncStateService.OnLocalStateChanged(this, binding, value, force);
+        }
+
+        internal void OnLocalButtonClicked(UiSyncBinding binding)
+        {
+            CanvasUiSyncStateService.OnLocalButtonClicked(this, binding);
+        }
+
+        internal void OnInteractionStarted(UiSyncBinding binding)
+        {
+            CanvasUiSyncStateService.OnInteractionStarted(this, binding);
+        }
+
+        internal void OnInteractionEnded(UiSyncBinding binding)
+        {
+            CanvasUiSyncStateService.OnInteractionEnded(this, binding);
+        }
+
+        internal void UpdateContinuousInteractions()
+        {
+            CanvasUiSyncStateService.UpdateContinuousInteractions(this);
+        }
+
+        internal void CommitLocalState(UiSyncBinding binding, object value, bool applyToLocalUi, StateStamp stamp)
+        {
+            CanvasUiSyncStateService.CommitLocalState(this, binding, value, applyToLocalUi, stamp);
+        }
+
+        internal void CommitLocalButton(UiSyncBinding binding, StateStamp stamp)
+        {
+            CanvasUiSyncStateService.CommitLocalButton(this, binding, stamp);
+        }
+
+        internal void ApplyRemoteState(string syncId, string valueType, object value, StateStamp stamp, bool isSnapshot)
+        {
+            CanvasUiSyncStateService.ApplyRemoteState(this, syncId, valueType, value, stamp, isSnapshot);
+        }
+
+        internal void FlushPendingCommits(float now)
+        {
+            CanvasUiSyncStateService.FlushPendingCommits(this, now);
+        }
+
+        internal void TickSnapshotRetry(float now)
+        {
+            CanvasUiSyncTransportService.TickSnapshotRetry(this, now);
+        }
+
+        internal void RequestSnapshotIfNeeded(bool force)
+        {
+            CanvasUiSyncTransportService.RequestSnapshotIfNeeded(this, force);
+        }
+
+        internal void TickSnapshotCleanup(float now)
+        {
+            CanvasUiSyncTransportService.TickSnapshotCleanup(this, now);
+        }
+
+        internal void TickPeriodicResync(float now)
+        {
+            CanvasUiSyncTransportService.TickPeriodicResync(this, now);
+        }
+
+        internal void TickStatisticsLog(float now)
+        {
+            CanvasUiSyncTransportService.TickStatisticsLog(this, now);
+        }
+
+        internal void SendHello()
+        {
+            CanvasUiSyncTransportService.SendHello(this);
+        }
+
+        internal IEnumerable<CanvasUiSyncRemoteEndpoint> GetActivePeerTargets()
+        {
+            return CanvasUiSyncTransportService.GetActivePeerTargets(this);
+        }
+
+        internal CanvasUiSyncRemoteEndpoint FindPeerTarget(string nodeId)
+        {
+            return CanvasUiSyncTransportService.FindPeerTarget(this, nodeId);
+        }
+
+        internal void TickNodeTimeout(float now)
+        {
+            CanvasUiSyncTransportService.TickNodeTimeout(this, now);
+        }
+
+        internal void SendSnapshot(CanvasUiSync target)
+        {
+            CanvasUiSyncTransportService.SendSnapshot(this, target);
+        }
+
+        internal void SendSnapshot(string ipAddress, int port)
+        {
+            CanvasUiSyncTransportService.SendSnapshot(this, ipAddress, port);
+        }
+
+        internal void SendSnapshotCore(Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
+        {
+            CanvasUiSyncTransportService.SendSnapshotCore(this, sendBegin, sendState, sendEnd);
+        }
+
+        internal IEnumerable<object[]> EnumerateSnapshotStateValues(string snapshotId)
+        {
+            return CanvasUiSyncTransportService.EnumerateSnapshotStateValues(this, snapshotId);
+        }
+
+        internal void BroadcastCommit(string syncId, string valueType, object value, StateStamp stamp)
+        {
+            CanvasUiSyncTransportService.BroadcastCommit(this, syncId, valueType, value, stamp);
+        }
+
+        internal void BroadcastButton(string syncId, StateStamp stamp)
+        {
+            CanvasUiSyncTransportService.BroadcastButton(this, syncId, stamp);
+        }
+
+        internal bool HasActivePeerTarget()
+        {
+            return CanvasUiSyncTransportService.HasActivePeerTarget(this);
+        }
+
+        internal bool IsPeerTargetActive(CanvasUiSyncRemoteEndpoint endpoint)
+        {
+            return CanvasUiSyncTransportService.IsPeerTargetActive(this, endpoint);
+        }
+
+        internal void SendTo(string ipAddress, int port, string address, params object[] values)
+        {
+            CanvasUiSyncTransportService.SendTo(this, ipAddress, port, address, values);
+        }
+
+        internal static long EstimatePayloadBytes(string address, object[] values)
+        {
+            return CanvasUiSyncTransportService.EstimatePayloadBytes(address, values);
+        }
+
+        internal static string SerializeLogicalTicks(long logicalTicks)
+        {
+            return CanvasUiSyncTransportService.SerializeLogicalTicks(logicalTicks);
         }
     }
 }
