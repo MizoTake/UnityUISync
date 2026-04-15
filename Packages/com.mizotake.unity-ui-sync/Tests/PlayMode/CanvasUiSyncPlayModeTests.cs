@@ -505,6 +505,31 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator RuntimeGeneratedDropdown_RemoteApply_InvokesOnValueChangedOnReceiver()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeDropdown = CreateRuntimeDropdown(peerA.sync.transform, "RuntimeDropdown");
+            var peerBRuntimeDropdown = CreateRuntimeDropdown(peerB.sync.transform, "RuntimeDropdown");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeDropdown:Dropdown") && HasBinding(peerB.sync, "DemoCanvas/RuntimeDropdown:Dropdown"), 60);
+
+            var remoteEventCount = 0;
+            var lastRemoteValue = -1;
+            peerBRuntimeDropdown.onValueChanged.AddListener(value => { remoteEventCount++; lastRemoteValue = value; });
+
+            peerARuntimeDropdown.value = 2;
+            yield return WaitUntil(() => peerBRuntimeDropdown.value == 2 && remoteEventCount > 0 && lastRemoteValue == 2, 60);
+
+            Assert.That(peerBRuntimeDropdown.value, Is.EqualTo(2));
+            Assert.That(remoteEventCount, Is.EqualTo(1));
+            Assert.That(lastRemoteValue, Is.EqualTo(2));
+        }
+
+        [UnityTest]
         public IEnumerator RuntimeGeneratedDropdown_ClickOpenAndBlockerClose_SyncsAcrossPeers()
         {
             EnsureEventSystemExists();

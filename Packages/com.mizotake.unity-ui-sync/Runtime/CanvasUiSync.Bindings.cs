@@ -578,14 +578,24 @@ namespace Mizotake.UnityUiSync
 
         private static void SetDropdownValue(Dropdown dropdown, int value)
         {
-            dropdown.SetValueWithoutNotify(value);
+            if (dropdown.value != value)
+            {
+                dropdown.value = value;
+                return;
+            }
+
             dropdown.RefreshShownValue();
             SyncOpenDropdownItemToggles(dropdown, value);
         }
 
         private static void SetDropdownValue(TMP_Dropdown dropdown, int value)
         {
-            dropdown.SetValueWithoutNotify(value);
+            if (dropdown.value != value)
+            {
+                dropdown.value = value;
+                return;
+            }
+
             dropdown.RefreshShownValue();
             SyncOpenDropdownItemToggles(dropdown, value);
         }
