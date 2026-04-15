@@ -213,11 +213,44 @@ namespace Mizotake.UnityUiSync
             var current = target;
             while (current != null && current != owner.transform)
             {
-                stack.Push(current.name);
+                stack.Push(BuildPathSegment(current));
                 current = current.parent;
             }
 
             return stack.Count == 0 ? owner.transform.name : string.Join("/", stack.ToArray());
+        }
+
+        private static string BuildPathSegment(Transform target)
+        {
+            if (target == null)
+            {
+                return string.Empty;
+            }
+
+            if (target.parent == null)
+            {
+                return target.name;
+            }
+
+            var duplicateCount = 0;
+            var duplicateIndex = 0;
+            for (var index = 0; index < target.parent.childCount; index++)
+            {
+                var sibling = target.parent.GetChild(index);
+                if (!string.Equals(sibling.name, target.name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (sibling == target)
+                {
+                    duplicateIndex = duplicateCount;
+                }
+
+                duplicateCount++;
+            }
+
+            return duplicateCount > 1 ? target.name + "[" + duplicateIndex + "]" : target.name;
         }
 
         internal static string ReadExplicitBindingId(Component target)

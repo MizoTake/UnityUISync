@@ -302,6 +302,247 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBRuntimeToggle.isOn, Is.True);
         }
 
+        [UnityTest]
+        public IEnumerator SameNameSiblingToggles_SyncByHierarchyOrder()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAGroup0 = CreateRuntimeContainer(peerA.sync.transform, "Group");
+            var peerAGroup1 = CreateRuntimeContainer(peerA.sync.transform, "Group");
+            var peerBGroup0 = CreateRuntimeContainer(peerB.sync.transform, "Group");
+            var peerBGroup1 = CreateRuntimeContainer(peerB.sync.transform, "Group");
+            var peerAToggle0 = CreateRuntimeToggle(peerAGroup0, "Option");
+            var peerAToggle1 = CreateRuntimeToggle(peerAGroup1, "Option");
+            var peerBToggle0 = CreateRuntimeToggle(peerBGroup0, "Option");
+            var peerBToggle1 = CreateRuntimeToggle(peerBGroup1, "Option");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/Group[0]/Option:Toggle") && HasBinding(peerA.sync, "DemoCanvas/Group[1]/Option:Toggle") && HasBinding(peerB.sync, "DemoCanvas/Group[0]/Option:Toggle") && HasBinding(peerB.sync, "DemoCanvas/Group[1]/Option:Toggle"), 60);
+
+            peerAToggle1.isOn = true;
+            yield return WaitUntil(() => !peerBToggle0.isOn && peerBToggle1.isOn, 60);
+
+            Assert.That(peerBToggle0.isOn, Is.False);
+            Assert.That(peerBToggle1.isOn, Is.True);
+
+            peerAToggle0.isOn = true;
+            yield return WaitUntil(() => peerBToggle0.isOn && peerBToggle1.isOn, 60);
+
+            Assert.That(peerBToggle0.isOn, Is.True);
+            Assert.That(peerBToggle1.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedSlider_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeSlider = CreateRuntimeSlider(peerA.sync.transform, "RuntimeSlider");
+            var peerBRuntimeSlider = CreateRuntimeSlider(peerB.sync.transform, "RuntimeSlider");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider") && HasBinding(peerB.sync, "DemoCanvas/RuntimeSlider:Slider"), 60);
+
+            peerARuntimeSlider.value = 0.75f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.75f) < 0.0001f, 60);
+
+            Assert.That(peerBRuntimeSlider.value, Is.EqualTo(0.75f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedScrollbar_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeScrollbar = CreateRuntimeScrollbar(peerA.sync.transform, "RuntimeScrollbar");
+            var peerBRuntimeScrollbar = CreateRuntimeScrollbar(peerB.sync.transform, "RuntimeScrollbar");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeScrollbar:Scrollbar") && HasBinding(peerB.sync, "DemoCanvas/RuntimeScrollbar:Scrollbar"), 60);
+
+            peerARuntimeScrollbar.value = 0.2f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeScrollbar.value - 0.2f) < 0.0001f, 60);
+
+            Assert.That(peerBRuntimeScrollbar.value, Is.EqualTo(0.2f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDropdown_ValueSyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeDropdown = CreateRuntimeDropdown(peerA.sync.transform, "RuntimeDropdown");
+            var peerBRuntimeDropdown = CreateRuntimeDropdown(peerB.sync.transform, "RuntimeDropdown");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeDropdown:Dropdown") && HasBinding(peerB.sync, "DemoCanvas/RuntimeDropdown:Dropdown"), 60);
+
+            peerARuntimeDropdown.value = 2;
+            yield return WaitUntil(() => peerBRuntimeDropdown.value == 2, 60);
+
+            Assert.That(peerBRuntimeDropdown.value, Is.EqualTo(2));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedInputField_OnEndEdit_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeInput = CreateRuntimeInputField(peerA.sync.transform, "RuntimeInput");
+            var peerBRuntimeInput = CreateRuntimeInputField(peerB.sync.transform, "RuntimeInput");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeInput:InputField") && HasBinding(peerB.sync, "DemoCanvas/RuntimeInput:InputField"), 60);
+
+            peerARuntimeInput.text = "Pending";
+            yield return WaitFrames(5);
+            Assert.That(peerBRuntimeInput.text, Is.EqualTo(string.Empty));
+
+            peerARuntimeInput.onEndEdit.Invoke("Pending");
+            yield return WaitUntil(() => peerBRuntimeInput.text == "Pending", 60);
+
+            Assert.That(peerBRuntimeInput.text, Is.EqualTo("Pending"));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedInputField_OnValueChanged_SyncsAcrossPeers_WithoutEndEdit()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ((CanvasUiSyncProfile)GetPrivateField(peerA.sync, "profile")).stringSendMode = CanvasUiSyncStringSendMode.OnValueChanged;
+            ((CanvasUiSyncProfile)GetPrivateField(peerB.sync, "profile")).stringSendMode = CanvasUiSyncStringSendMode.OnValueChanged;
+            yield return null;
+            yield return null;
+
+            var peerARuntimeInput = CreateRuntimeInputField(peerA.sync.transform, "RuntimeInputOnValueChanged");
+            var peerBRuntimeInput = CreateRuntimeInputField(peerB.sync.transform, "RuntimeInputOnValueChanged");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeInputOnValueChanged:InputField") && HasBinding(peerB.sync, "DemoCanvas/RuntimeInputOnValueChanged:InputField"), 60);
+
+            peerARuntimeInput.text = "Streaming";
+            peerARuntimeInput.onValueChanged.Invoke("Streaming");
+            yield return WaitUntil(() => peerBRuntimeInput.text == "Streaming", 60);
+
+            Assert.That(peerBRuntimeInput.text, Is.EqualTo("Streaming"));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedControls_WithBindingIds_SyncAcrossDifferentHierarchies()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateRuntimeContainer(peerA.sync.transform, "OperationsPanel");
+            var peerBContainer = CreateRuntimeContainer(peerB.sync.transform, "DiagnosticsPanel");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "LocalToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "RemoteToggle");
+            AddBindingId(peerAToggle.gameObject, "SharedToggle");
+            AddBindingId(peerBToggle.gameObject, "SharedToggle");
+            var peerASlider = CreateRuntimeSlider(peerAContainer, "LocalSlider");
+            var peerBSlider = CreateRuntimeSlider(peerBContainer, "RemoteSlider");
+            AddBindingId(peerASlider.gameObject, "SharedSlider");
+            AddBindingId(peerBSlider.gameObject, "SharedSlider");
+            var peerAScrollbar = CreateRuntimeScrollbar(peerAContainer, "LocalScrollbar");
+            var peerBScrollbar = CreateRuntimeScrollbar(peerBContainer, "RemoteScrollbar");
+            AddBindingId(peerAScrollbar.gameObject, "SharedScrollbar");
+            AddBindingId(peerBScrollbar.gameObject, "SharedScrollbar");
+            var peerADropdown = CreateRuntimeDropdown(peerAContainer, "LocalDropdown");
+            var peerBDropdown = CreateRuntimeDropdown(peerBContainer, "RemoteDropdown");
+            AddBindingId(peerADropdown.gameObject, "SharedDropdown");
+            AddBindingId(peerBDropdown.gameObject, "SharedDropdown");
+            var peerAInput = CreateRuntimeInputField(peerAContainer, "LocalInput");
+            var peerBInput = CreateRuntimeInputField(peerBContainer, "RemoteInput");
+            AddBindingId(peerAInput.gameObject, "SharedInputField");
+            AddBindingId(peerBInput.gameObject, "SharedInputField");
+            var peerAIndicator = CreateRuntimeText(peerAContainer, "LocalButtonState", "READY");
+            var peerBIndicator = CreateRuntimeText(peerBContainer, "RemoteButtonState", "READY");
+            var peerAButton = CreateRuntimeButton(peerAContainer, peerAIndicator, "LocalButton");
+            var peerBButton = CreateRuntimeButton(peerBContainer, peerBIndicator, "RemoteButton");
+            AddBindingId(peerAButton.gameObject, "SharedButton");
+            AddBindingId(peerBButton.gameObject, "SharedButton");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/SharedToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/SharedToggle:Toggle") && HasBinding(peerA.sync, "DemoCanvas/SharedSlider:Slider") && HasBinding(peerB.sync, "DemoCanvas/SharedSlider:Slider") && HasBinding(peerA.sync, "DemoCanvas/SharedScrollbar:Scrollbar") && HasBinding(peerB.sync, "DemoCanvas/SharedScrollbar:Scrollbar") && HasBinding(peerA.sync, "DemoCanvas/SharedDropdown:Dropdown") && HasBinding(peerB.sync, "DemoCanvas/SharedDropdown:Dropdown") && HasBinding(peerA.sync, "DemoCanvas/SharedInputField:InputField") && HasBinding(peerB.sync, "DemoCanvas/SharedInputField:InputField") && HasBinding(peerA.sync, "DemoCanvas/SharedButton:Button") && HasBinding(peerB.sync, "DemoCanvas/SharedButton:Button"), 60);
+
+            peerAToggle.isOn = true;
+            peerASlider.value = 0.61f;
+            peerAScrollbar.value = 0.33f;
+            peerADropdown.value = 1;
+            peerAInput.text = "Bound";
+            peerAInput.onEndEdit.Invoke("Bound");
+            peerAButton.onClick.Invoke();
+            yield return WaitUntil(() => peerBToggle.isOn && Mathf.Abs(peerBSlider.value - 0.61f) < 0.0001f && Mathf.Abs(peerBScrollbar.value - 0.33f) < 0.0001f && peerBDropdown.value == 1 && peerBInput.text == "Bound" && peerBIndicator.text == "CLICKED", 60);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+            Assert.That(peerBSlider.value, Is.EqualTo(0.61f).Within(0.0001f));
+            Assert.That(peerBScrollbar.value, Is.EqualTo(0.33f).Within(0.0001f));
+            Assert.That(peerBDropdown.value, Is.EqualTo(1));
+            Assert.That(peerBInput.text, Is.EqualTo("Bound"));
+            Assert.That(peerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(peerBIndicator.text, Is.EqualTo("CLICKED"));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedButton_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAIndicator = CreateRuntimeText(peerA.sync.transform, "RuntimeButtonState", "READY");
+            var peerBIndicator = CreateRuntimeText(peerB.sync.transform, "RuntimeButtonState", "READY");
+            var peerARuntimeButton = CreateRuntimeButton(peerA.sync.transform, peerAIndicator, "RuntimeButton");
+            var peerBRuntimeButton = CreateRuntimeButton(peerB.sync.transform, peerBIndicator, "RuntimeButton");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeButton:Button") && HasBinding(peerB.sync, "DemoCanvas/RuntimeButton:Button"), 60);
+
+            peerARuntimeButton.onClick.Invoke();
+            yield return WaitUntil(() => peerAIndicator.text == "CLICKED" && peerBIndicator.text == "CLICKED", 60);
+
+            Assert.That(peerARuntimeButton, Is.Not.Null);
+            Assert.That(peerBRuntimeButton, Is.Not.Null);
+            Assert.That(peerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(peerBIndicator.text, Is.EqualTo("CLICKED"));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedButton_ClickBeforeRemoteBindingExists_AppliesAfterRemoteButtonAppears()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAIndicator = CreateRuntimeText(peerA.sync.transform, "LateRuntimeButtonState", "READY");
+            var peerBIndicator = CreateRuntimeText(peerB.sync.transform, "LateRuntimeButtonState", "READY");
+            var peerARuntimeButton = CreateRuntimeButton(peerA.sync.transform, peerAIndicator, "LateRuntimeButton");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/LateRuntimeButton:Button"), 60);
+
+            peerARuntimeButton.onClick.Invoke();
+            yield return WaitFrames(10);
+            Assert.That(peerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(peerBIndicator.text, Is.EqualTo("READY"));
+
+            var peerBRuntimeButton = CreateRuntimeButton(peerB.sync.transform, peerBIndicator, "LateRuntimeButton");
+            yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/LateRuntimeButton:Button") && peerBIndicator.text == "CLICKED", 60);
+
+            Assert.That(peerBRuntimeButton, Is.Not.Null);
+            Assert.That(peerBIndicator.text, Is.EqualTo("CLICKED"));
+        }
+
         private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false)
         {
             var canvasObject = new GameObject(canvasName, typeof(Canvas), typeof(GraphicRaycaster));
@@ -350,6 +591,13 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             return (peerAPort, peerBPort);
         }
 
+        private static Transform CreateRuntimeContainer(Transform parent, string objectName)
+        {
+            var containerObject = new GameObject(objectName, typeof(RectTransform));
+            containerObject.transform.SetParent(parent, false);
+            return containerObject.transform;
+        }
+
         private static Toggle CreateRuntimeToggle(Transform parent, string toggleName)
         {
             var toggleObject = new GameObject(toggleName, typeof(RectTransform), typeof(Toggle));
@@ -357,6 +605,76 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var toggle = toggleObject.GetComponent<Toggle>();
             toggle.SetIsOnWithoutNotify(false);
             return toggle;
+        }
+
+        private static Slider CreateRuntimeSlider(Transform parent, string sliderName)
+        {
+            var sliderObject = DefaultControls.CreateSlider(new DefaultControls.Resources());
+            sliderObject.name = sliderName;
+            sliderObject.transform.SetParent(parent, false);
+            var slider = sliderObject.GetComponent<Slider>();
+            slider.SetValueWithoutNotify(0f);
+            return slider;
+        }
+
+        private static Scrollbar CreateRuntimeScrollbar(Transform parent, string scrollbarName)
+        {
+            var scrollbarObject = DefaultControls.CreateScrollbar(new DefaultControls.Resources());
+            scrollbarObject.name = scrollbarName;
+            scrollbarObject.transform.SetParent(parent, false);
+            var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
+            scrollbar.SetValueWithoutNotify(0f);
+            return scrollbar;
+        }
+
+        private static Dropdown CreateRuntimeDropdown(Transform parent, string dropdownName)
+        {
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = dropdownName;
+            dropdownObject.transform.SetParent(parent, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            dropdown.options.Add(new Dropdown.OptionData("Bypass"));
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            return dropdown;
+        }
+
+        private static InputField CreateRuntimeInputField(Transform parent, string inputName)
+        {
+            var inputObject = DefaultControls.CreateInputField(new DefaultControls.Resources());
+            inputObject.name = inputName;
+            inputObject.transform.SetParent(parent, false);
+            var input = inputObject.GetComponent<InputField>();
+            input.SetTextWithoutNotify(string.Empty);
+            return input;
+        }
+
+        private static Button CreateRuntimeButton(Transform parent, Text indicatorText, string buttonName)
+        {
+            var buttonObject = new GameObject(buttonName, typeof(RectTransform), typeof(Image), typeof(Button));
+            buttonObject.transform.SetParent(parent, false);
+            var button = buttonObject.GetComponent<Button>();
+            button.onClick.AddListener(() => indicatorText.text = "CLICKED");
+            return button;
+        }
+
+        private static Text CreateRuntimeText(Transform parent, string objectName, string initialText)
+        {
+            var textObject = new GameObject(objectName, typeof(RectTransform), typeof(Text));
+            textObject.transform.SetParent(parent, false);
+            var text = textObject.GetComponent<Text>();
+            text.text = initialText;
+            return text;
+        }
+
+        private static CanvasUiSyncBindingId AddBindingId(GameObject target, string bindingId)
+        {
+            var component = target.AddComponent<CanvasUiSyncBindingId>();
+            component.BindingId = bindingId;
+            return component;
         }
 
         private static void SetPrivateField(object instance, string fieldName, object value)

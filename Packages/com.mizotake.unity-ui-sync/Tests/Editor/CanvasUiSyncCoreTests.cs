@@ -55,20 +55,18 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
             var panelObject0 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
             panelObject0.transform.SetParent(canvasObject.transform, false);
-            var id0 = AddBindingId(panelObject0, "Panel[0]");
-            Assert.That(id0, Is.Not.Null);
             var panelObject1 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
             panelObject1.transform.SetParent(canvasObject.transform, false);
-            var id1 = AddBindingId(panelObject1, "Panel[1]");
-            Assert.That(id1, Is.Not.Null);
             InvokePrivate(sync, "Awake");
             InvokePrivate(sync, "ScanBindings");
             var bindings = (IDictionary)GetPrivateField(sync, "bindings");
             Assert.That(bindings.Count, Is.EqualTo(2));
+            Assert.That(bindings.Contains("OperationCanvas/Panel[0]:Toggle"), Is.True);
+            Assert.That(bindings.Contains("OperationCanvas/Panel[1]:Toggle"), Is.True);
         }
 
         [Test]
-        public void BuildSyncId_UsesCanvasRelativePathWithoutSiblingIndex()
+        public void BuildSyncId_UsesCanvasRelativePath_WhenNamesAreUnique()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
             var sync = canvasObject.AddComponent<CanvasUiSync>();
@@ -80,6 +78,27 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(sync, "Awake");
             var result = (string)InvokePrivate(sync, "BuildSyncId", sliderObject.transform, "Slider");
             Assert.That(result, Is.EqualTo("OperationCanvas/LightingPanel/MasterFader:Slider"));
+        }
+
+        [Test]
+        public void BuildSyncId_UsesSiblingOrder_WhenNamesOverlap()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            var panelObject0 = new GameObject("LightingPanel", typeof(RectTransform));
+            panelObject0.transform.SetParent(canvasObject.transform, false);
+            var panelObject1 = new GameObject("LightingPanel", typeof(RectTransform));
+            panelObject1.transform.SetParent(canvasObject.transform, false);
+            var sliderObject0 = new GameObject("MasterFader", typeof(RectTransform), typeof(Slider));
+            sliderObject0.transform.SetParent(panelObject0.transform, false);
+            var sliderObject1 = new GameObject("MasterFader", typeof(RectTransform), typeof(Slider));
+            sliderObject1.transform.SetParent(panelObject1.transform, false);
+            InvokePrivate(sync, "Awake");
+            var result0 = (string)InvokePrivate(sync, "BuildSyncId", sliderObject0.transform, "Slider");
+            var result1 = (string)InvokePrivate(sync, "BuildSyncId", sliderObject1.transform, "Slider");
+            Assert.That(result0, Is.EqualTo("OperationCanvas/LightingPanel[0]/MasterFader:Slider"));
+            Assert.That(result1, Is.EqualTo("OperationCanvas/LightingPanel[1]/MasterFader:Slider"));
         }
 
         [Test]
@@ -253,6 +272,75 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Dropdown", 2, 100L, "PeerB", 1);
 
             Assert.That(dropdown.value, Is.EqualTo(2));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
+        }
+
+        [Test]
+        public void HandleCommitState_AfterRuntimeGeneratedSlider_RescansAndAppliesRemoteState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var sliderObject = DefaultControls.CreateSlider(new DefaultControls.Resources());
+            sliderObject.name = "RuntimeSlider";
+            sliderObject.transform.SetParent(canvasObject.transform, false);
+            var slider = sliderObject.GetComponent<Slider>();
+            slider.SetValueWithoutNotify(0f);
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", sliderObject.transform, "Slider");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Slider", 0.8f, 100L, "PeerB", 1);
+
+            Assert.That(slider.value, Is.EqualTo(0.8f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
+        }
+
+        [Test]
+        public void HandleCommitState_AfterRuntimeGeneratedScrollbar_RescansAndAppliesRemoteState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var scrollbarObject = DefaultControls.CreateScrollbar(new DefaultControls.Resources());
+            scrollbarObject.name = "RuntimeScrollbar";
+            scrollbarObject.transform.SetParent(canvasObject.transform, false);
+            var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
+            scrollbar.SetValueWithoutNotify(0f);
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", scrollbarObject.transform, "Scrollbar");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Scrollbar", 0.35f, 100L, "PeerB", 1);
+
+            Assert.That(scrollbar.value, Is.EqualTo(0.35f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
+        }
+
+        [Test]
+        public void HandleCommitState_AfterRuntimeGeneratedInputField_RescansAndAppliesRemoteState()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var inputObject = DefaultControls.CreateInputField(new DefaultControls.Resources());
+            inputObject.name = "RuntimeInput";
+            inputObject.transform.SetParent(canvasObject.transform, false);
+            var inputField = inputObject.GetComponent<InputField>();
+            inputField.SetTextWithoutNotify(string.Empty);
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", inputObject.transform, "InputField");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "InputField", "Remote operator", 100L, "PeerB", 1);
+
+            Assert.That(inputField.text, Is.EqualTo("Remote operator"));
             Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId), Is.True);
         }
 
