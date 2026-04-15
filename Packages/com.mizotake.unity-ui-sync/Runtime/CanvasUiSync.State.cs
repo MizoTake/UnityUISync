@@ -62,10 +62,13 @@ namespace Mizotake.UnityUiSync
                     return;
                 }
 
-                if (owner.lastProposedValues.TryGetValue(binding.SyncId, out var lastValue) && Mathf.Abs(Convert.ToSingle(lastValue) - Convert.ToSingle(value)) < Mathf.Max(0f, owner.profile.sliderEpsilon))
+                var currentValue = ReadContinuousValue(value);
+                if (owner.lastContinuousProposedValues.TryGetValue(binding.SyncId, out var lastValue) && Mathf.Abs(lastValue - currentValue) < Mathf.Max(0f, owner.profile.sliderEpsilon))
                 {
                     return;
                 }
+
+                owner.lastContinuousProposedValues[binding.SyncId] = currentValue;
             }
 
             owner.lastProposeTimes[binding.SyncId] = Time.unscaledTime;
@@ -323,6 +326,11 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.nextPendingCommitTime = nextPendingCommitTime;
+        }
+
+        private static float ReadContinuousValue(object value)
+        {
+            return value is float singleValue ? singleValue : Convert.ToSingle(value);
         }
     }
 }

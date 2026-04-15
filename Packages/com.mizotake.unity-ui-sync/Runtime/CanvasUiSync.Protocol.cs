@@ -52,14 +52,15 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleHello(CanvasUiSync owner, object[] values)
         {
-            if (values.Length < 4 || !string.Equals(Convert.ToString(values[2]), owner.canvasId, StringComparison.Ordinal))
+            var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
+            if (values.Length < 4 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var nodeId = Convert.ToString(values[0]);
+            var nodeId = ReadString(values, 0);
             var protocolVersion = Convert.ToInt32(values[1]);
-            var incomingSessionId = Convert.ToString(values[3]);
+            var incomingSessionId = ReadString(values, 3);
             if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
@@ -94,13 +95,14 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleRequestSnapshot(CanvasUiSync owner, object[] values)
         {
-            if (values.Length < 3 || !string.Equals(Convert.ToString(values[1]), owner.canvasId, StringComparison.Ordinal))
+            var incomingCanvasId = values.Length > 1 ? ReadString(values, 1) : null;
+            if (values.Length < 3 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var nodeId = Convert.ToString(values[0]);
-            var incomingRegistryHash = Convert.ToString(values[2]);
+            var nodeId = ReadString(values, 0);
+            var incomingRegistryHash = ReadString(values, 2);
             if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
@@ -123,18 +125,20 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleBeginSnapshot(CanvasUiSync owner, object[] values)
         {
-            if (values.Length < 4 || !string.Equals(Convert.ToString(values[1]), owner.canvasId, StringComparison.Ordinal))
+            var incomingCanvasId = values.Length > 1 ? ReadString(values, 1) : null;
+            if (values.Length < 4 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            if (owner.ShouldIgnoreIncomingPeer(Convert.ToString(values[2])))
+            if (owner.ShouldIgnoreIncomingPeer(ReadString(values, 2)))
             {
                 return;
             }
 
-            owner.activeSnapshotIds[Convert.ToString(values[0])] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
-            Debug.Log("CanvasUiSync snapshot begin: " + Convert.ToString(values[0]) + " canvas=" + owner.canvasId, owner);
+            var snapshotId = ReadString(values, 0);
+            owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
+            Debug.Log("CanvasUiSync snapshot begin: " + snapshotId + " canvas=" + owner.canvasId, owner);
         }
 
         internal static void HandleSnapshotState(CanvasUiSync owner, object[] values)
@@ -144,8 +148,9 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            var snapshotId = Convert.ToString(values[0]);
-            if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !string.Equals(Convert.ToString(values[1]), owner.canvasId, StringComparison.Ordinal))
+            var snapshotId = ReadString(values, 0);
+            var incomingCanvasId = ReadString(values, 1);
+            if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
@@ -155,7 +160,9 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            owner.ApplyRemoteState(Convert.ToString(values[2]), Convert.ToString(values[3]), owner.DeserializeValue(values[4], Convert.ToString(values[3])), snapshotStamp, true);
+            var syncId = ReadString(values, 2);
+            var valueType = ReadString(values, 3);
+            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true);
         }
 
         internal static void HandleEndSnapshot(CanvasUiSync owner, object[] values)
@@ -165,13 +172,14 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (owner.ShouldIgnoreIncomingPeer(Convert.ToString(values[2])))
+            if (owner.ShouldIgnoreIncomingPeer(ReadString(values, 2)))
             {
                 return;
             }
 
-            var snapshotId = Convert.ToString(values[0]);
-            if (!owner.activeSnapshotIds.Remove(snapshotId) || !string.Equals(Convert.ToString(values[1]), owner.canvasId, StringComparison.Ordinal))
+            var snapshotId = ReadString(values, 0);
+            var incomingCanvasId = ReadString(values, 1);
+            if (!owner.activeSnapshotIds.Remove(snapshotId) || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
@@ -183,12 +191,13 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleCommitState(CanvasUiSync owner, object[] values)
         {
-            if (values.Length < 8 || !string.Equals(Convert.ToString(values[2]), owner.canvasId, StringComparison.Ordinal))
+            var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
+            if (values.Length < 8 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var senderNodeId = Convert.ToString(values[0]);
+            var senderNodeId = ReadString(values, 0);
             if (owner.ShouldIgnoreIncomingPeer(senderNodeId))
             {
                 return;
@@ -199,23 +208,26 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            owner.ApplyRemoteState(Convert.ToString(values[3]), Convert.ToString(values[4]), owner.DeserializeValue(values[5], Convert.ToString(values[4])), stateStamp, false);
+            var syncId = ReadString(values, 3);
+            var valueType = ReadString(values, 4);
+            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[5], valueType), stateStamp, false);
         }
 
         internal static void HandleCommitButton(CanvasUiSync owner, object[] values)
         {
-            if (values.Length < 7 || !string.Equals(Convert.ToString(values[2]), owner.canvasId, StringComparison.Ordinal))
+            var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
+            if (values.Length < 7 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var senderNodeId = Convert.ToString(values[0]);
+            var senderNodeId = ReadString(values, 0);
             if (owner.ShouldIgnoreIncomingPeer(senderNodeId))
             {
                 return;
             }
 
-            var syncId = Convert.ToString(values[3]);
+            var syncId = ReadString(values, 3);
             if (!owner.TryReadStamp(values, 4, out var stamp))
             {
                 return;
@@ -296,7 +308,7 @@ namespace Mizotake.UnityUiSync
         {
             var incomingLogicalTicks = Convert.ToInt64(values[startIndex]);
             owner.logicalTicks = Math.Max(owner.logicalTicks, incomingLogicalTicks);
-            return new CanvasUiSync.StateStamp(incomingLogicalTicks, Convert.ToString(values[startIndex + 1]), Convert.ToInt32(values[startIndex + 2]));
+            return new CanvasUiSync.StateStamp(incomingLogicalTicks, ReadString(values, startIndex + 1), Convert.ToInt32(values[startIndex + 2]));
         }
 
         internal static bool TryReadStamp(CanvasUiSync owner, object[] values, int startIndex, out CanvasUiSync.StateStamp stamp)
@@ -374,6 +386,11 @@ namespace Mizotake.UnityUiSync
             {
                 Debug.LogError("CanvasUiSync type mismatch: syncId=" + syncId + " local=" + localType + " remote=" + remoteType, owner);
             }
+        }
+
+        private static string ReadString(object[] values, int index)
+        {
+            return values[index] as string ?? Convert.ToString(values[index]);
         }
     }
 }

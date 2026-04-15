@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
+using TMPro;
 using uOSC;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Mizotake.UnityUiSync
 {
@@ -33,6 +36,7 @@ namespace Mizotake.UnityUiSync
         internal readonly Dictionary<string, LocalStateRecord> localStates = new Dictionary<string, LocalStateRecord>();
         internal readonly Dictionary<string, StateStamp> latestAppliedButtonStamps = new Dictionary<string, StateStamp>();
         internal readonly Dictionary<string, object> lastProposedValues = new Dictionary<string, object>();
+        internal readonly Dictionary<string, float> lastContinuousProposedValues = new Dictionary<string, float>();
         internal readonly Dictionary<string, float> lastProposeTimes = new Dictionary<string, float>();
         internal readonly Dictionary<string, DeferredStateCommit> deferredCommits = new Dictionary<string, DeferredStateCommit>();
         internal readonly Dictionary<string, DeferredStateCommit> pendingRemoteCommits = new Dictionary<string, DeferredStateCommit>();
@@ -41,6 +45,20 @@ namespace Mizotake.UnityUiSync
         internal readonly List<string> stateCacheKeysToRemove = new List<string>();
         internal readonly List<string> expiredSnapshotIds = new List<string>();
         internal readonly List<string> expiredNodeIds = new List<string>();
+        internal readonly List<string> bindingKeyScratch = new List<string>();
+        internal readonly List<string> pathSegmentScratch = new List<string>();
+        internal readonly List<Toggle> toggleScratch = new List<Toggle>();
+        internal readonly List<Toggle> dropdownItemToggleScratch = new List<Toggle>();
+        internal readonly List<Slider> sliderScratch = new List<Slider>();
+        internal readonly List<Scrollbar> scrollbarScratch = new List<Scrollbar>();
+        internal readonly List<Dropdown> dropdownScratch = new List<Dropdown>();
+        internal readonly List<TMP_Dropdown> tmpDropdownScratch = new List<TMP_Dropdown>();
+        internal readonly List<InputField> inputFieldScratch = new List<InputField>();
+        internal readonly List<TMP_InputField> tmpInputFieldScratch = new List<TMP_InputField>();
+        internal readonly List<Button> buttonScratch = new List<Button>();
+        internal readonly List<Transform> dropdownTemplateRootScratch = new List<Transform>();
+        internal readonly List<Transform> dropdownRuntimeRootScratch = new List<Transform>();
+        internal readonly StringBuilder stringBuilderScratch = new StringBuilder(256);
         internal string registryHash = string.Empty;
         internal string canvasId = string.Empty;
         internal string sessionId = string.Empty;
@@ -368,6 +386,7 @@ namespace Mizotake.UnityUiSync
         internal void PruneTransientStateCaches()
         {
             RemoveMissingBindingState(lastProposedValues);
+            RemoveMissingBindingState(lastContinuousProposedValues);
             RemoveMissingBindingState(lastProposeTimes);
             RemoveMissingBindingState(deferredCommits);
             PrunePendingRemoteCommits();

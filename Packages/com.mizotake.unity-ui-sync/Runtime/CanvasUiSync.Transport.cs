@@ -86,9 +86,18 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            foreach (var endpoint in owner.GetActivePeerTargets())
+            if (owner.profile.peerEndpoints == null)
             {
-                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.RequestSnapshotAddress, owner.profile.nodeId, owner.canvasId, owner.registryHash);
+                return;
+            }
+
+            for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
+            {
+                var endpoint = owner.profile.peerEndpoints[index];
+                if (IsPeerTargetActive(owner, endpoint))
+                {
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.RequestSnapshotAddress, owner.profile.nodeId, owner.canvasId, owner.registryHash);
+                }
             }
 
             owner.snapshotRetryCount++;
@@ -162,9 +171,18 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendHello(CanvasUiSync owner)
         {
-            foreach (var endpoint in owner.GetActivePeerTargets())
+            if (owner.profile.peerEndpoints == null)
             {
-                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId);
+                return;
+            }
+
+            for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
+            {
+                var endpoint = owner.profile.peerEndpoints[index];
+                if (IsPeerTargetActive(owner, endpoint))
+                {
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId);
+                }
             }
         }
 
@@ -258,17 +276,35 @@ namespace Mizotake.UnityUiSync
 
         internal static void BroadcastCommit(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp)
         {
-            foreach (var endpoint in owner.GetActivePeerTargets())
+            if (owner.profile.peerEndpoints == null)
             {
-                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitStateAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, valueType, owner.SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                return;
+            }
+
+            for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
+            {
+                var endpoint = owner.profile.peerEndpoints[index];
+                if (IsPeerTargetActive(owner, endpoint))
+                {
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitStateAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, valueType, owner.SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                }
             }
         }
 
         internal static void BroadcastButton(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
         {
-            foreach (var endpoint in owner.GetActivePeerTargets())
+            if (owner.profile.peerEndpoints == null)
             {
-                owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitButtonAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                return;
+            }
+
+            for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
+            {
+                var endpoint = owner.profile.peerEndpoints[index];
+                if (IsPeerTargetActive(owner, endpoint))
+                {
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitButtonAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                }
             }
         }
 
