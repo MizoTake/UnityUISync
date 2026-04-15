@@ -215,16 +215,40 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            var senderNodeId = Convert.ToString(values[0]);
+            if (ShouldIgnoreIncomingPeer(senderNodeId))
+            {
+                return;
+            }
+
             var syncId = Convert.ToString(values[3]);
+            if (!TryReadStamp(values, 4, out var stamp))
+            {
+                return;
+            }
+
             if (!bindings.TryGetValue(syncId, out var binding) && (!TryRefreshBindingsForSyncId(syncId) || !bindings.TryGetValue(syncId, out binding)))
             {
+                if (pendingRemoteButtonCommits.TryGetValue(syncId, out var existing) && !IsIncomingStampNewer(existing.Stamp, stamp))
+                {
+                    return;
+                }
+
+                pendingRemoteButtonCommits[syncId] = new PendingButtonCommit(stamp, Time.unscaledTime);
                 HandleUnknownSyncId(syncId);
                 return;
             }
 
-            if (!TryReadStamp(values, 4, out var stamp))
+            ApplyButtonCommit(binding, syncId, stamp);
+            pendingRemoteButtonCommits.Remove(syncId);
+        }
+
+        private bool ApplyButtonCommit(UiSyncBinding binding, string syncId, StateStamp stamp)
+        {
+            if (binding.Component is not Button button)
             {
-                return;
+                HandleTypeMismatch(syncId, binding.ValueType, "Button");
+                return false;
             }
 
             if (latestAppliedButtonStamps.TryGetValue(syncId, out var lastStamp) && !IsIncomingStampNewer(lastStamp, stamp))
@@ -234,17 +258,16 @@ namespace Mizotake.UnityUiSync
                     Debug.Log("CanvasUiSync stale button discard: " + syncId + " ticks=" + stamp.LogicalTicks + " node=" + stamp.NodeId, this);
                 }
 
-                return;
+                return false;
             }
 
             latestAppliedButtonStamps[syncId] = stamp;
             using (new SuppressionScope(this))
             {
-                if (binding.Component is Button button)
-                {
-                    button.onClick.Invoke();
-                }
+                button.onClick.Invoke();
             }
+
+            return true;
         }
 
         private bool IsPeerAuthorized(string nodeId)

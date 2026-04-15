@@ -53,8 +53,14 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
             var sync = canvasObject.AddComponent<CanvasUiSync>();
             AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
-            new GameObject("Panel", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
-            new GameObject("Panel", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var panelObject0 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
+            panelObject0.transform.SetParent(canvasObject.transform, false);
+            var id0 = panelObject0.AddComponent<CanvasUiSyncBindingId>();
+            id0.BindingId = "Panel[0]";
+            var panelObject1 = new GameObject("Panel", typeof(RectTransform), typeof(Toggle));
+            panelObject1.transform.SetParent(canvasObject.transform, false);
+            var id1 = panelObject1.AddComponent<CanvasUiSyncBindingId>();
+            id1.BindingId = "Panel[1]";
             InvokePrivate(sync, "Awake");
             InvokePrivate(sync, "ScanBindings");
             var bindings = (IDictionary)GetPrivateField(sync, "bindings");
@@ -62,7 +68,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
-        public void BuildSyncId_UsesCanvasRelativePathAndSiblingIndex()
+        public void BuildSyncId_UsesCanvasRelativePathWithoutSiblingIndex()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
             var sync = canvasObject.AddComponent<CanvasUiSync>();
@@ -73,7 +79,24 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             sliderObject.transform.SetParent(panelObject.transform, false);
             InvokePrivate(sync, "Awake");
             var result = (string)InvokePrivate(sync, "BuildSyncId", sliderObject.transform, "Slider");
-            Assert.That(result, Is.EqualTo("OperationCanvas/LightingPanel[0]/MasterFader[0]:Slider"));
+            Assert.That(result, Is.EqualTo("OperationCanvas/LightingPanel/MasterFader:Slider"));
+        }
+
+        [Test]
+        public void BuildSyncId_UsesBindingIdComponentWhenProvided()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            var panelObject = new GameObject("LightingPanel", typeof(RectTransform));
+            panelObject.transform.SetParent(canvasObject.transform, false);
+            var sliderObject = new GameObject("MasterFader", typeof(RectTransform), typeof(Slider));
+            sliderObject.transform.SetParent(panelObject.transform, false);
+            var bindingId = sliderObject.AddComponent<CanvasUiSyncBindingId>();
+            bindingId.BindingId = "CustomSlider";
+            InvokePrivate(sync, "Awake");
+            var result = (string)InvokePrivate(sync, "BuildSyncId", sliderObject.transform, "Slider");
+            Assert.That(result, Is.EqualTo("OperationCanvas/CustomSlider:Slider"));
         }
 
         [Test]

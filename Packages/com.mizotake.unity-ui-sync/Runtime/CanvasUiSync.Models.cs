@@ -94,16 +94,30 @@ namespace Mizotake.UnityUiSync
 
         private readonly struct DeferredStateCommit
         {
-            public DeferredStateCommit(string valueType, object value, StateStamp stamp)
+            public DeferredStateCommit(string valueType, object value, StateStamp stamp, float receivedAt = 0f)
             {
                 ValueType = valueType;
                 Value = value;
                 Stamp = stamp;
+                ReceivedAt = receivedAt;
             }
 
             public string ValueType { get; }
             public object Value { get; }
             public StateStamp Stamp { get; }
+            public float ReceivedAt { get; }
+        }
+
+        private readonly struct PendingButtonCommit
+        {
+            public PendingButtonCommit(StateStamp stamp, float receivedAt)
+            {
+                Stamp = stamp;
+                ReceivedAt = receivedAt;
+            }
+
+            public StateStamp Stamp { get; }
+            public float ReceivedAt { get; }
         }
 
         private readonly struct SuppressionScope : IDisposable

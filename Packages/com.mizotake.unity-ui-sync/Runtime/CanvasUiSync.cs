@@ -10,6 +10,7 @@ namespace Mizotake.UnityUiSync
     public sealed partial class CanvasUiSync : MonoBehaviour
     {
         private const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
+        private const float PendingRemoteCommitTimeoutSeconds = 30f;
         private const string HelloAddress = "/uisync/hello";
         private const string RequestSnapshotAddress = "/uisync/requestSnapshot";
         private const string BeginSnapshotAddress = "/uisync/beginSnapshot";
@@ -32,6 +33,8 @@ namespace Mizotake.UnityUiSync
         private readonly Dictionary<string, object> lastProposedValues = new Dictionary<string, object>();
         private readonly Dictionary<string, float> lastProposeTimes = new Dictionary<string, float>();
         private readonly Dictionary<string, DeferredStateCommit> deferredCommits = new Dictionary<string, DeferredStateCommit>();
+        private readonly Dictionary<string, DeferredStateCommit> pendingRemoteCommits = new Dictionary<string, DeferredStateCommit>();
+        private readonly Dictionary<string, PendingButtonCommit> pendingRemoteButtonCommits = new Dictionary<string, PendingButtonCommit>();
         private readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
         private readonly List<string> stateCacheKeysToRemove = new List<string>();
         private readonly List<string> expiredSnapshotIds = new List<string>();
@@ -238,6 +241,75 @@ namespace Mizotake.UnityUiSync
             }
 
             PruneTransientStateCaches();
+            ApplyPendingRemoteCommits();
+            ApplyPendingRemoteButtonCommits();
+        }
+
+        private void ApplyPendingRemoteCommits()
+        {
+            if (pendingRemoteCommits.Count == 0)
+            {
+                return;
+            }
+
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteCommits)
+            {
+                if (!bindings.TryGetValue(pair.Key, out var binding))
+                {
+                    continue;
+                }
+
+                var pending = pair.Value;
+                if (!string.Equals(binding.ValueType, pending.ValueType, StringComparison.Ordinal))
+                {
+                    HandleTypeMismatch(pair.Key, binding.ValueType, pending.ValueType);
+                    stateCacheKeysToRemove.Add(pair.Key);
+                    continue;
+                }
+
+                ApplyRemoteState(pair.Key, pending.ValueType, pending.Value, pending.Stamp, false);
+                stateCacheKeysToRemove.Add(pair.Key);
+            }
+
+            foreach (var syncId in stateCacheKeysToRemove)
+            {
+                pendingRemoteCommits.Remove(syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
+        }
+
+        private void ApplyPendingRemoteButtonCommits()
+        {
+            if (pendingRemoteButtonCommits.Count == 0)
+            {
+                return;
+            }
+
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteButtonCommits)
+            {
+                if (!bindings.ContainsKey(pair.Key))
+                {
+                    continue;
+                }
+
+                if (!bindings.TryGetValue(pair.Key, out var binding))
+                {
+                    continue;
+                }
+
+                ApplyButtonCommit(binding, pair.Key, pair.Value.Stamp);
+                stateCacheKeysToRemove.Add(pair.Key);
+            }
+
+            foreach (var syncId in stateCacheKeysToRemove)
+            {
+                pendingRemoteButtonCommits.Remove(syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
         }
 
         private void PruneTransientStateCaches()
@@ -245,6 +317,50 @@ namespace Mizotake.UnityUiSync
             RemoveMissingBindingState(lastProposedValues);
             RemoveMissingBindingState(lastProposeTimes);
             RemoveMissingBindingState(deferredCommits);
+            PrunePendingRemoteCommits();
+        }
+
+        private void PrunePendingRemoteCommits()
+        {
+            if (pendingRemoteCommits.Count == 0 && pendingRemoteButtonCommits.Count == 0)
+            {
+                return;
+            }
+
+            var now = Time.unscaledTime;
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteCommits)
+            {
+                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
+                {
+                    continue;
+                }
+
+                stateCacheKeysToRemove.Add(pair.Key);
+            }
+
+            foreach (var syncId in stateCacheKeysToRemove)
+            {
+                pendingRemoteCommits.Remove(syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteButtonCommits)
+            {
+                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
+                {
+                    continue;
+                }
+
+                stateCacheKeysToRemove.Add(pair.Key);
+            }
+
+            foreach (var syncId in stateCacheKeysToRemove)
+            {
+                pendingRemoteButtonCommits.Remove(syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
         }
 
         private void RemoveMissingBindingState<TValue>(Dictionary<string, TValue> valuesBySyncId)

@@ -139,6 +139,12 @@ namespace Mizotake.UnityUiSync
         {
             if (!bindings.TryGetValue(syncId, out var binding) && (!TryRefreshBindingsForSyncId(syncId) || !bindings.TryGetValue(syncId, out binding)))
             {
+                if (pendingRemoteCommits.TryGetValue(syncId, out var existing) && !IsIncomingStampNewer(existing.Stamp, stamp))
+                {
+                    return;
+                }
+
+                pendingRemoteCommits[syncId] = new DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
                 HandleUnknownSyncId(syncId);
                 return;
             }

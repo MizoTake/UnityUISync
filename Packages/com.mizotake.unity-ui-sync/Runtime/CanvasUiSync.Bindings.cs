@@ -160,6 +160,12 @@ namespace Mizotake.UnityUiSync
 
         private string BuildSyncId(Transform target, string componentType)
         {
+            var bindingId = target.GetComponent<CanvasUiSyncBindingId>();
+            if (bindingId != null && !string.IsNullOrWhiteSpace(bindingId.BindingId))
+            {
+                return canvasId + "/" + bindingId.BindingId + ":" + componentType;
+            }
+
             return canvasId + "/" + BuildPath(target) + ":" + componentType;
         }
 
@@ -169,11 +175,11 @@ namespace Mizotake.UnityUiSync
             var current = target;
             while (current != null && current != transform)
             {
-                stack.Push(current.name + "[" + current.GetSiblingIndex() + "]");
+                stack.Push(current.name);
                 current = current.parent;
             }
 
-            return stack.Count == 0 ? transform.name + "[0]" : string.Join("/", stack.ToArray());
+            return stack.Count == 0 ? transform.name : string.Join("/", stack.ToArray());
         }
 
         private string ComputeRegistryHash()
