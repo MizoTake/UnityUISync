@@ -391,7 +391,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var expected = false;
             for (var index = 0; index < 120; index++)
             {
-                expected = index % 2 == 0;
+                expected = !expected;
                 if (index % 2 == 0)
                 {
                     peerA.toggle.isOn = expected;
@@ -401,10 +401,9 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                     peerB.toggle.isOn = expected;
                 }
 
-                yield return null;
+                yield return WaitUntil(() => peerA.toggle.isOn == expected && peerB.toggle.isOn == expected, 30);
             }
 
-            yield return WaitUntil(() => peerA.toggle.isOn == expected && peerB.toggle.isOn == expected, 30);
             Assert.That(peerA.toggle.isOn, Is.EqualTo(expected));
             Assert.That(peerB.toggle.isOn, Is.EqualTo(expected));
         }
