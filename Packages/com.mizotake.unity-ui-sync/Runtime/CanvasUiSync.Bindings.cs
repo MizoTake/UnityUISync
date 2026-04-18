@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using TMPro;
@@ -11,10 +10,8 @@ namespace Mizotake.UnityUiSync
 {
     internal static class CanvasUiSyncBindingsService
     {
-        private static readonly FieldInfo UiDropdownListField = typeof(Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
-        private static readonly FieldInfo UiDropdownBlockerField = typeof(Dropdown).GetField("m_Blocker", BindingFlags.Instance | BindingFlags.NonPublic);
-        private static readonly FieldInfo TmpDropdownListField = typeof(TMP_Dropdown).GetField("m_Dropdown", BindingFlags.Instance | BindingFlags.NonPublic);
-        private static readonly FieldInfo TmpDropdownBlockerField = typeof(TMP_Dropdown).GetField("m_Blocker", BindingFlags.Instance | BindingFlags.NonPublic);
+        private const string DropdownListObjectName = "Dropdown List";
+        private const string DropdownBlockerObjectName = "Blocker";
         internal readonly struct BindingScanContext
         {
             public BindingScanContext(CanvasUiSync owner)
@@ -28,10 +25,12 @@ namespace Mizotake.UnityUiSync
                 pathCache.Clear();
                 CollectComponentsInChildren(owner, Dropdowns);
                 CollectComponentsInChildren(owner, TmpDropdowns);
+                EnsureDropdownTemplateMarkers(owner, Dropdowns);
+                EnsureDropdownTemplateMarkers(owner, TmpDropdowns);
                 dropdownTemplateRoots.Clear();
                 dropdownRuntimeRoots.Clear();
-                CacheDropdownRoots(Dropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
-                CacheDropdownRoots(TmpDropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
+                CacheDropdownRoots(owner, Dropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
+                CacheDropdownRoots(owner, TmpDropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
             }
 
             private readonly CanvasUiSync owner;
@@ -56,7 +55,7 @@ namespace Mizotake.UnityUiSync
                 return IsUnderRoots(target, dropdownRuntimeRoots);
             }
 
-            private static void CacheDropdownRoots(IEnumerable<Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            private static void CacheDropdownRoots(CanvasUiSync owner, IEnumerable<Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
             {
                 foreach (var dropdown in dropdowns)
                 {
@@ -70,19 +69,15 @@ namespace Mizotake.UnityUiSync
                         templateRoots.Add(dropdown.template);
                     }
 
-                    if (UiDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null)
+                    var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+                    if (runtimeRoot != null)
                     {
-                        runtimeRoots.Add(dropdownList.transform);
-                    }
-
-                    if (UiDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null)
-                    {
-                        runtimeRoots.Add(blocker.transform);
+                        runtimeRoots.Add(runtimeRoot);
                     }
                 }
             }
 
-            private static void CacheDropdownRoots(IEnumerable<TMP_Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            private static void CacheDropdownRoots(CanvasUiSync owner, IEnumerable<TMP_Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
             {
                 foreach (var dropdown in dropdowns)
                 {
@@ -96,14 +91,10 @@ namespace Mizotake.UnityUiSync
                         templateRoots.Add(dropdown.template);
                     }
 
-                    if (TmpDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null)
+                    var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+                    if (runtimeRoot != null)
                     {
-                        runtimeRoots.Add(dropdownList.transform);
-                    }
-
-                    if (TmpDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null)
-                    {
-                        runtimeRoots.Add(blocker.transform);
+                        runtimeRoots.Add(runtimeRoot);
                     }
                 }
             }
@@ -242,7 +233,7 @@ namespace Mizotake.UnityUiSync
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "DropdownExpanded"), "DropdownExpanded", () => IsDropdownExpanded(component), value => SetDropdownExpanded(component, Convert.ToBoolean(value)), false, true));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "DropdownExpanded"), "DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false, true));
                 RegisterDropdownItemToggles(owner, component, context);
             }
         }
@@ -267,7 +258,7 @@ namespace Mizotake.UnityUiSync
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded", () => IsDropdownExpanded(component), value => SetDropdownExpanded(component, Convert.ToBoolean(value)), false, true));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false, true));
                 RegisterTmpDropdownItemToggles(owner, component, context);
             }
         }
@@ -658,7 +649,7 @@ namespace Mizotake.UnityUiSync
 
         private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext? context = null)
         {
-            return component == null || owner.IsComponentExcluded(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
+            return component == null || owner.IsComponentExcluded(component) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
         }
 
         private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext? context = null)
@@ -699,30 +690,24 @@ namespace Mizotake.UnityUiSync
             }
 
             CollectComponentsInChildren(owner, owner.dropdownScratch);
+            EnsureDropdownTemplateMarkers(owner, owner.dropdownScratch);
             for (var index = 0; index < owner.dropdownScratch.Count; index++)
             {
                 var dropdown = owner.dropdownScratch[index];
-                if (UiDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null && (target == dropdownList.transform || target.IsChildOf(dropdownList.transform)))
-                {
-                    return true;
-                }
-
-                if (UiDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null && (target == blocker.transform || target.IsChildOf(blocker.transform)))
+                var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+                if (runtimeRoot != null && (target == runtimeRoot || target.IsChildOf(runtimeRoot)))
                 {
                     return true;
                 }
             }
 
             CollectComponentsInChildren(owner, owner.tmpDropdownScratch);
+            EnsureDropdownTemplateMarkers(owner, owner.tmpDropdownScratch);
             for (var index = 0; index < owner.tmpDropdownScratch.Count; index++)
             {
                 var dropdown = owner.tmpDropdownScratch[index];
-                if (TmpDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null && (target == dropdownList.transform || target.IsChildOf(dropdownList.transform)))
-                {
-                    return true;
-                }
-
-                if (TmpDropdownBlockerField?.GetValue(dropdown) is GameObject blocker && blocker != null && (target == blocker.transform || target.IsChildOf(blocker.transform)))
+                var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+                if (runtimeRoot != null && (target == runtimeRoot || target.IsChildOf(runtimeRoot)))
                 {
                     return true;
                 }
@@ -731,21 +716,21 @@ namespace Mizotake.UnityUiSync
             return false;
         }
 
-        private static bool IsDropdownExpanded(Dropdown dropdown)
+        private static bool IsDropdownExpanded(CanvasUiSync owner, Dropdown dropdown)
         {
-            return UiDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null;
+            return GetRuntimeDropdownList(owner, dropdown) != null;
         }
 
-        private static bool IsDropdownExpanded(TMP_Dropdown dropdown)
+        private static bool IsDropdownExpanded(CanvasUiSync owner, TMP_Dropdown dropdown)
         {
-            return TmpDropdownListField?.GetValue(dropdown) is GameObject dropdownList && dropdownList != null;
+            return GetRuntimeDropdownList(owner, dropdown) != null;
         }
 
-        private static void SetDropdownExpanded(Dropdown dropdown, bool isExpanded)
+        private static void SetDropdownExpanded(CanvasUiSync owner, Dropdown dropdown, bool isExpanded)
         {
             if (isExpanded)
             {
-                if (!IsDropdownExpanded(dropdown))
+                if (!IsDropdownExpanded(owner, dropdown))
                 {
                     dropdown.Show();
                 }
@@ -753,7 +738,7 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (IsDropdownExpanded(dropdown))
+            if (IsDropdownExpanded(owner, dropdown))
             {
                 dropdown.Hide();
             }
@@ -811,7 +796,8 @@ namespace Mizotake.UnityUiSync
 
         private static Toggle GetDropdownItemToggle(CanvasUiSync owner, Dropdown dropdown, int optionIndex)
         {
-            if (UiDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            var dropdownList = GetRuntimeDropdownList(owner, dropdown);
+            if (dropdownList == null)
             {
                 return null;
             }
@@ -821,7 +807,8 @@ namespace Mizotake.UnityUiSync
 
         private static Toggle GetDropdownItemToggle(CanvasUiSync owner, TMP_Dropdown dropdown, int optionIndex)
         {
-            if (TmpDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            var dropdownList = GetRuntimeDropdownList(owner, dropdown);
+            if (dropdownList == null)
             {
                 return null;
             }
@@ -855,7 +842,8 @@ namespace Mizotake.UnityUiSync
 
         private static void SyncOpenDropdownItemToggles(CanvasUiSync owner, Dropdown dropdown, int selectedOptionIndex)
         {
-            if (UiDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            var dropdownList = GetRuntimeDropdownList(owner, dropdown);
+            if (dropdownList == null)
             {
                 return;
             }
@@ -865,7 +853,8 @@ namespace Mizotake.UnityUiSync
 
         private static void SyncOpenDropdownItemToggles(CanvasUiSync owner, TMP_Dropdown dropdown, int selectedOptionIndex)
         {
-            if (TmpDropdownListField?.GetValue(dropdown) is not GameObject dropdownList || dropdownList == null)
+            var dropdownList = GetRuntimeDropdownList(owner, dropdown);
+            if (dropdownList == null)
             {
                 return;
             }
@@ -873,11 +862,11 @@ namespace Mizotake.UnityUiSync
             SyncOpenDropdownItemToggles(owner, dropdownList, dropdown.options.Count, selectedOptionIndex);
         }
 
-        private static void SetDropdownExpanded(TMP_Dropdown dropdown, bool isExpanded)
+        private static void SetDropdownExpanded(CanvasUiSync owner, TMP_Dropdown dropdown, bool isExpanded)
         {
             if (isExpanded)
             {
-                if (!IsDropdownExpanded(dropdown))
+                if (!IsDropdownExpanded(owner, dropdown))
                 {
                     dropdown.Show();
                 }
@@ -885,7 +874,7 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (IsDropdownExpanded(dropdown))
+            if (IsDropdownExpanded(owner, dropdown))
             {
                 dropdown.Hide();
             }
@@ -914,6 +903,153 @@ namespace Mizotake.UnityUiSync
         {
             results.Clear();
             owner.GetComponentsInChildren(true, results);
+        }
+
+        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, IEnumerable<Dropdown> dropdowns)
+        {
+            foreach (var dropdown in dropdowns)
+            {
+                if (dropdown?.template == null)
+                {
+                    continue;
+                }
+
+                CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
+            }
+        }
+
+        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, IEnumerable<TMP_Dropdown> dropdowns)
+        {
+            foreach (var dropdown in dropdowns)
+            {
+                if (dropdown?.template == null)
+                {
+                    continue;
+                }
+
+                CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
+            }
+        }
+
+        private static Transform FindRuntimeDropdownRoot(CanvasUiSync owner, Dropdown dropdown)
+        {
+            if (dropdown?.template == null)
+            {
+                return null;
+            }
+
+            CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
+            var markedRoot = FindMarkedRuntimeDropdownRoot(owner, dropdown);
+            return markedRoot != null ? markedRoot : FindRuntimeDropdownRootByHeuristic(dropdown.template);
+        }
+
+        private static Transform FindRuntimeDropdownRoot(CanvasUiSync owner, TMP_Dropdown dropdown)
+        {
+            if (dropdown?.template == null)
+            {
+                return null;
+            }
+
+            CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
+            var markedRoot = FindMarkedRuntimeDropdownRoot(owner, dropdown);
+            return markedRoot != null ? markedRoot : FindRuntimeDropdownRootByHeuristic(dropdown.template);
+        }
+
+        private static Transform FindMarkedRuntimeDropdownRoot(CanvasUiSync owner, Dropdown dropdown)
+        {
+            var templateParent = dropdown.template.parent;
+            if (templateParent == null)
+            {
+                return null;
+            }
+
+            for (var index = 0; index < templateParent.childCount; index++)
+            {
+                var child = templateParent.GetChild(index);
+                if (child == dropdown.template)
+                {
+                    continue;
+                }
+
+                if (child.TryGetComponent<CanvasUiSyncDropdownRuntimeMarker>(out var marker) && marker.Matches(owner, dropdown))
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private static Transform FindMarkedRuntimeDropdownRoot(CanvasUiSync owner, TMP_Dropdown dropdown)
+        {
+            var templateParent = dropdown.template.parent;
+            if (templateParent == null)
+            {
+                return null;
+            }
+
+            for (var index = 0; index < templateParent.childCount; index++)
+            {
+                var child = templateParent.GetChild(index);
+                if (child == dropdown.template)
+                {
+                    continue;
+                }
+
+                if (child.TryGetComponent<CanvasUiSyncDropdownRuntimeMarker>(out var marker) && marker.Matches(owner, dropdown))
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private static Transform FindRuntimeDropdownRootByHeuristic(Transform templateRoot)
+        {
+            if (templateRoot == null || templateRoot.parent == null)
+            {
+                return null;
+            }
+
+            var templateParent = templateRoot.parent;
+            for (var index = 0; index < templateParent.childCount; index++)
+            {
+                var child = templateParent.GetChild(index);
+                if (child == templateRoot || !string.Equals(child.name, DropdownListObjectName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (child.TryGetComponent<Canvas>(out var popupCanvas) && popupCanvas.overrideSorting)
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private static GameObject GetRuntimeDropdownList(CanvasUiSync owner, Dropdown dropdown)
+        {
+            var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+            return runtimeRoot != null ? runtimeRoot.gameObject : null;
+        }
+
+        private static GameObject GetRuntimeDropdownList(CanvasUiSync owner, TMP_Dropdown dropdown)
+        {
+            var runtimeRoot = FindRuntimeDropdownRoot(owner, dropdown);
+            return runtimeRoot != null ? runtimeRoot.gameObject : null;
+        }
+
+        private static bool IsDropdownBlockerComponent(Component component)
+        {
+            return component is Button button && IsDropdownBlocker(button.gameObject);
+        }
+
+        private static bool IsDropdownBlocker(GameObject gameObject)
+        {
+            return gameObject != null && string.Equals(gameObject.name, DropdownBlockerObjectName, StringComparison.Ordinal) && gameObject.GetComponent<Canvas>() != null && gameObject.GetComponent<Image>() != null && gameObject.GetComponent<Button>() != null;
         }
 
         private static Toggle GetDropdownItemToggle(CanvasUiSync owner, GameObject dropdownList, int optionCount, int optionIndex)
