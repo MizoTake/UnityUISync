@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
@@ -289,6 +290,43 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return WaitUntil(() => !peerA.toggle.isOn && !peerB.toggle.isOn, 30);
             Assert.That(peerA.toggle.isOn, Is.False);
             Assert.That(peerB.toggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator ExcludedRuntimeToggle_DoesNotSync_WhileIncludedRuntimeToggleStillSyncs()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAIncludedToggle = CreateRuntimeToggle(peerA.sync.transform, "IncludedToggle");
+            var peerBIncludedToggle = CreateRuntimeToggle(peerB.sync.transform, "IncludedToggle");
+            var peerAExcludedToggle = CreateRuntimeToggle(peerA.sync.transform, "ExcludedToggle");
+            var peerBExcludedToggle = CreateRuntimeToggle(peerB.sync.transform, "ExcludedToggle");
+            AssignExcludedComponents(peerA.sync, peerAExcludedToggle);
+            AssignExcludedComponents(peerB.sync, peerBExcludedToggle);
+            InvokePrivate(peerA.sync, "RefreshBindingsIfHierarchyChanged", true);
+            InvokePrivate(peerB.sync, "RefreshBindingsIfHierarchyChanged", true);
+            yield return null;
+
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/IncludedToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/IncludedToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+
+            peerAIncludedToggle.isOn = true;
+            yield return WaitUntil(() => peerBIncludedToggle.isOn, 60);
+
+            Assert.That(peerBIncludedToggle.isOn, Is.True);
+
+            peerAExcludedToggle.isOn = true;
+            yield return WaitFrames(10);
+
+            Assert.That(peerBExcludedToggle.isOn, Is.False);
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
         }
 
         [UnityTest]
@@ -1263,6 +1301,11 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             profile.snapshotRequestIntervalSeconds = 0.02f;
             profile.snapshotRequestRetryCount = 10;
             profile.snapshotRetryCooldownSeconds = 0.02f;
+        }
+
+        private static void AssignExcludedComponents(CanvasUiSync sync, params Component[] components)
+        {
+            SetPrivateField(sync, "excludedComponents", new List<Component>(components));
         }
 
         private static void SetPrivateField(object instance, string fieldName, object value)
