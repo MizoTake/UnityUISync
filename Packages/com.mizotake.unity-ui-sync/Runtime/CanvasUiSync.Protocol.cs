@@ -19,8 +19,15 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            owner.RecordReceivedPayload(address, values);
-            owner.DispatchReceivedPayload(address, values);
+            try
+            {
+                owner.RecordReceivedPayload(address, values);
+                owner.DispatchReceivedPayload(address, values);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("CanvasUiSync ignored malformed payload: address=" + address + " reason=" + exception.Message, owner);
+            }
         }
 
         internal static void RecordReceivedPayload(CanvasUiSync owner, string address, object[] values)

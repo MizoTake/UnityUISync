@@ -579,6 +579,19 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleReceivedPayload_IgnoresMalformedHelloPayload()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            Assert.DoesNotThrow(() => InvokePrivate(sync, "HandleReceivedPayload", "/uisync/hello", new object[] { "PeerB", "bad-version", "OperationCanvas", "SessionB" }));
+            Assert.That(((IDictionary)GetPrivateField(sync, "nodes")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
         public void HandleBeginSnapshot_DoesNotTrackUnauthorizedPeer()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -864,6 +877,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             AssertButtonTargetsLocalToggle("PeerBCanvas");
         }
 
+        [Test]
         public void GeneratedProfiles_HaveExpectedPeerSettings()
         {
             Mizotake.UnityUiSync.Editor.CanvasUiSyncSampleBuilder.RebuildSampleAssets();

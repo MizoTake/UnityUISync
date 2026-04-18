@@ -23,6 +23,11 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 Object.Destroy(canvas.gameObject);
             }
 
+            foreach (var eventSystem in Object.FindObjectsOfType<EventSystem>(true))
+            {
+                Object.Destroy(eventSystem.gameObject);
+            }
+
             yield return WaitFrames(3);
         }
 
@@ -1385,8 +1390,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 return;
             }
 
-            var eventSystemObject = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-            Object.DontDestroyOnLoad(eventSystemObject);
+            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
         }
 
         private static void ClickDropdown(Dropdown dropdown)

@@ -2,18 +2,56 @@
 
 Canvas 単位で Unity UI と TMP UI を同期するための UPM パッケージです。
 
-このリポジトリではパッケージ本体を `Packages/com.mizotake.unity-ui-sync` に置き、動作確認用のサンプルシーンと Profile は `Assets/Scenes` および `Assets/UnityUISyncSamples` に生成します。
+この README は Package Manager から参照されることを前提に、導入手順と最低限のセットアップだけをまとめています。リポジトリ全体の説明やローカル検証手順はルートの `README.md` を参照してください。
 
-Package Manager 向けには `Samples~/Basic Setup` へ同内容のサンプルを出力します。
+## 導入
 
-## 同期 ID の運用について
+Unity Package Manager の `Add package from git URL...` に次を指定します。
+
+```text
+https://github.com/MizoTake/UnityUISync.git?path=/Packages/com.mizotake.unity-ui-sync
+```
+
+`manifest.json` に直接書く場合の例です。
+
+```json
+{
+  "dependencies": {
+    "com.hecomi.uosc": "https://github.com/hecomi/uOSC.git#upm",
+    "com.mizotake.unity-ui-sync": "https://github.com/MizoTake/UnityUISync.git?path=/Packages/com.mizotake.unity-ui-sync"
+  }
+}
+```
+
+`com.unity.textmeshpro` と `com.unity.ugui` は通常の UPM 解決で取得される想定です。`com.hecomi.uosc` は利用プロジェクト側でも Git URL を明示しておく方が安全です。
+
+## セットアップ
+
+1. `Create > Unity UI Sync > プロファイル` で `CanvasUiSyncProfile` を作成します。
+2. `nodeId`、`listenPort`、`allowedPeers`、`peerEndpoints` を設定します。
+3. 同期したい `Canvas` に `CanvasUiSync` を付与して `profile` を割り当てます。
+4. 別シーン間で同じ論理 Canvas として扱いたい場合だけ `Canvas ID 上書き` を設定します。
+5. 現行実装では OSC 通信は常に有効です。同一 process 内のデモでも uOSC を通して同期します。
+
+`CanvasUiSyncRemoteEndpoint.name` は相手の `nodeId` に合わせる前提です。
+
+## サンプル
+
+Package Manager から `Import Samples > Basic Setup` を実行すると、`Samples/Unity UI Sync/Basic Setup` 配下へサンプルが展開されます。
+
+同梱サンプルには以下が含まれます。
+
+- `Scenes/UnityUiSyncSample.unity`
+- `Profiles/PeerA.asset`
+- `Profiles/PeerB.asset`
+
+サンプルは 1 つのシーンに `PeerA` と `PeerB` の Canvas を並べた構成で、`PeerA` は `9000`、`PeerB` は `9001` を使用します。
+
+## 同期 ID
 
 現在の同期 ID は以下の優先順で決定されます。
 
-1. `CanvasUiSyncBindingId` コンポーネントが付いた場合は `canvasId/bindingId:ComponentType`。
-2. 未設定の場合は Canvas から当該コンポーネントまでの GameObject 階層パスを使います。
-   同一親配下に同名 GameObject が複数ある場合は hierarchy 順で `[0]`, `[1]` の添字が付きます。
+1. `CanvasUiSyncBindingId` コンポーネントが付いた場合は `canvasId/bindingId:ComponentType`
+2. 未設定の場合は Canvas から当該コンポーネントまでの GameObject 階層パス
 
-このため、実装側で `GameObject` の階層や名前を後から変更すると ID が変わる可能性があります。
-とくに同名 sibling の順番を入れ替えると ID も変わります。
-`/` 同名の UI の重複や動的に階層が変わるレイアウトでは、同期先を固定したいコンポーネントに `CanvasUiSyncBindingId` を付けて固定文字列を使う方が安全です。
+同一親配下に同名 GameObject が複数ある場合は hierarchy 順で `[0]`, `[1]` の添字が付きます。階層変更や sibling 順の変更で ID が変わる可能性があるため、動的 UI や同名 UI では `CanvasUiSyncBindingId` の利用を推奨します。

@@ -1,5 +1,9 @@
 # Canvas UI Sync System 仕様書 v0.4
 
+> 注記
+> この文書は Authority / Client モデルを検討していた時期の設計メモです。
+> 現行実装は `CanvasUiSyncProfile` に peer 一覧を持つ対称構成へ寄っているため、実際の挙動確認や導入時の参照先は `README.md` と `Packages/com.mizotake.unity-ui-sync/README.md` を優先してください。
+
 ## 1. 概要
 
 本システムは、同一 UI 構成を持つ複数台の Unity アプリケーション間で、**Canvas 単位**に UI 状態を同期するための仕組みを提供する。
