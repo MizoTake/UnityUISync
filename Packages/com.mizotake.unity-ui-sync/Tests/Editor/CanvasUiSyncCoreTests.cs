@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -365,6 +366,165 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void ScanBindings_ExcludedComponents_AreNotRegistered()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var includedToggleObject = new GameObject("IncludedToggle", typeof(RectTransform), typeof(Toggle));
+            includedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedDropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            excludedDropdownObject.name = "ExcludedDropdown";
+            excludedDropdownObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignExcludedComponents(sync, excludedDropdownObject.GetComponent<Dropdown>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+
+            var bindingKeys = ((IDictionary)GetPrivateField(sync, "bindings")).Keys.Cast<string>().ToArray();
+
+            Assert.That(bindingKeys, Does.Contain("OperationCanvas/IncludedToggle:Toggle"));
+            Assert.That(bindingKeys.Any(key => key.Contains("ExcludedDropdown", System.StringComparison.Ordinal)), Is.False);
+        }
+
+        [Test]
+        public void ScanBindings_DropdownOptionToggles_AreNotPolledPerFrame()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            dropdown.options.Add(new Dropdown.OptionData("Bypass"));
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+
+            var polledBindingSyncIds = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Select(GetBindingSyncId).ToArray();
+
+            Assert.That(polledBindingSyncIds, Does.Contain("OperationCanvas/ModeDropdown:Dropdown"));
+            Assert.That(polledBindingSyncIds, Does.Contain("OperationCanvas/ModeDropdown:DropdownExpanded"));
+            Assert.That(polledBindingSyncIds.Any(syncId => syncId.Contains("DropdownItemToggle", System.StringComparison.Ordinal)), Is.False);
+        }
+
+        [Test]
+        public void UpdatePolledBindings_ProgrammaticDropdownSelection_BroadcastsOnlyDropdownAndChangedOptions()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            dropdown.options.Add(new Dropdown.OptionData("Bypass"));
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            dropdown.SetValueWithoutNotify(2);
+            dropdown.RefreshShownValue();
+            InvokePrivate(sync, "UpdatePolledBindings");
+
+            var localStates = (IDictionary)GetPrivateField(sync, "localStates");
+            var selectedOptionState = localStates["OperationCanvas/ModeDropdown:DropdownItemToggle[2]"];
+            var previousOptionState = localStates["OperationCanvas/ModeDropdown:DropdownItemToggle[0]"];
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(3));
+            Assert.That((bool)selectedOptionState.GetType().GetProperty("Value").GetValue(selectedOptionState), Is.True);
+            Assert.That((bool)previousOptionState.GetType().GetProperty("Value").GetValue(previousOptionState), Is.False);
+        }
+
+        [Test]
+        public void UpdatePolledBindings_LargeDropdown_ReportsReducedPerFrameWork()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "LargeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            for (var index = 0; index < 300; index++)
+            {
+                dropdown.options.Add(new Dropdown.OptionData("Option" + index));
+            }
+
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+
+            var polledBindings = (ICollection)GetPrivateField(sync, "polledBindings");
+            var stopwatch = Stopwatch.StartNew();
+            for (var index = 0; index < 1000; index++)
+            {
+                InvokePrivate(sync, "UpdatePolledBindings");
+            }
+
+            stopwatch.Stop();
+            TestContext.WriteLine("LargeDropdown polling benchmark: polledBindings=" + polledBindings.Count + " elapsedMs=" + stopwatch.Elapsed.TotalMilliseconds.ToString("F3"));
+
+            Assert.That(polledBindings.Count, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void LargeDropdown_BindingDiscoveryBenchmarks_AreReported()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "LargeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            for (var index = 0; index < 300; index++)
+            {
+                dropdown.options.Add(new Dropdown.OptionData("Option" + index));
+            }
+
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+
+            var initialSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            var signature = initialSignature;
+            var signatureStopwatch = Stopwatch.StartNew();
+            for (var index = 0; index < 100; index++)
+            {
+                signature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            }
+
+            signatureStopwatch.Stop();
+            var scanStopwatch = Stopwatch.StartNew();
+            for (var index = 0; index < 100; index++)
+            {
+                InvokePrivate(sync, "ScanBindings");
+            }
+
+            scanStopwatch.Stop();
+            TestContext.WriteLine("LargeDropdown binding discovery benchmark: optionCount=300 signature100CallsMs=" + signatureStopwatch.Elapsed.TotalMilliseconds.ToString("F3") + " scan100CallsMs=" + scanStopwatch.Elapsed.TotalMilliseconds.ToString("F3"));
+
+            Assert.That(signature, Is.EqualTo(initialSignature));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Count, Is.EqualTo(302));
+        }
+
+        [Test]
         public void ScanBindings_ClassifiesContinuousAndPolledBindingsWithoutDuplication()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -387,12 +547,12 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var polledBindings = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().ToArray();
 
             Assert.That(continuousBindings.Length, Is.EqualTo(1));
-            Assert.That(polledBindings.Length, Is.EqualTo(3));
+            Assert.That(polledBindings.Length, Is.EqualTo(2));
 
             InvokePrivate(sync, "ScanBindings");
 
             Assert.That(((IEnumerable)GetPrivateField(sync, "continuousBindings")).Cast<object>().Count(), Is.EqualTo(1));
-            Assert.That(((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Count(), Is.EqualTo(3));
+            Assert.That(((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Count(), Is.EqualTo(2));
         }
 
         [Test]
@@ -429,6 +589,53 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             InvokePrivate(sync, "Awake");
             InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "Intruder", "SessionX");
             Assert.That(((IDictionary)GetPrivateField(sync, "activeSnapshotIds")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void HandleCommitState_UnknownSyncId_OlderPendingCommitDoesNotReplaceNewerOne()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeToggle:Toggle";
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Toggle", true, 101L, "PeerB", 2);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Toggle", false, 100L, "PeerB", 1);
+
+            var pendingRemoteCommits = (IDictionary)GetPrivateField(sync, "pendingRemoteCommits");
+            var pending = pendingRemoteCommits[syncId];
+            var stamp = pending.GetType().GetProperty("Stamp").GetValue(pending);
+
+            Assert.That(pendingRemoteCommits.Count, Is.EqualTo(1));
+            Assert.That(pending.GetType().GetProperty("Value").GetValue(pending), Is.EqualTo(true));
+            Assert.That((long)stamp.GetType().GetProperty("LogicalTicks").GetValue(stamp), Is.EqualTo(101L));
+            Assert.That((int)stamp.GetType().GetProperty("Sequence").GetValue(stamp), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void HandleCommitButton_UnknownSyncId_OlderPendingCommitDoesNotReplaceNewerOne()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeButton:Button";
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", syncId, 101L, "PeerB", 2);
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", syncId, 100L, "PeerB", 1);
+
+            var pendingRemoteButtonCommits = (IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits");
+            var pending = pendingRemoteButtonCommits[syncId];
+            var stamp = pending.GetType().GetProperty("Stamp").GetValue(pending);
+
+            Assert.That(pendingRemoteButtonCommits.Count, Is.EqualTo(1));
+            Assert.That((long)stamp.GetType().GetProperty("LogicalTicks").GetValue(stamp), Is.EqualTo(101L));
+            Assert.That((int)stamp.GetType().GetProperty("Sequence").GetValue(stamp), Is.EqualTo(2));
         }
 
         [Test]
@@ -851,10 +1058,64 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
         }
 
+        [Test]
+        public void SetSyncEnabled_TogglesLocalAndRemoteSynchronization()
+        {
+            var canvasObject = new GameObject("PeerACanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeId = "PeerA";
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.allowedPeers.Add("PeerB");
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            AssignCanvasIdOverride(sync, "DemoCanvas");
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings")).Values.Cast<object>().Single();
+            var syncId = (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
+
+            sync.SetSyncEnabled(false);
+            Assert.That(sync.SyncEnabled, Is.False);
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            InvokePrivate(sync, "OnLocalStateChanged", binding, true, false);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "DemoCanvas", syncId, "Toggle", true, 100L, "PeerB", 1);
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+            Assert.That(toggle.isOn, Is.False);
+
+            sync.SetSyncEnabled(true);
+            Assert.That(sync.SyncEnabled, Is.True);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "DemoCanvas", syncId, "Toggle", true, 101L, "PeerB", 2);
+            Assert.That(toggle.isOn, Is.True);
+
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            InvokePrivate(sync, "OnLocalStateChanged", binding, false, false);
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+        }
+
         private static void AssignProfile(CanvasUiSync sync, CanvasUiSyncProfile profile)
         {
             var serializedObject = new SerializedObject(sync);
             serializedObject.FindProperty("profile").objectReferenceValue = profile;
+            serializedObject.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void AssignExcludedComponents(CanvasUiSync sync, params Component[] components)
+        {
+            var serializedObject = new SerializedObject(sync);
+            var excludedComponentsProperty = serializedObject.FindProperty("excludedComponents");
+            Assert.That(excludedComponentsProperty, Is.Not.Null);
+            excludedComponentsProperty.arraySize = components.Length;
+            for (var index = 0; index < components.Length; index++)
+            {
+                excludedComponentsProperty.GetArrayElementAtIndex(index).objectReferenceValue = components[index];
+            }
+
             serializedObject.ApplyModifiedPropertiesWithoutUndo();
         }
 
@@ -884,6 +1145,11 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             });
 
             return (string)GetPrivateField(sync, "canvasIdOverride");
+        }
+
+        private static string GetBindingSyncId(object binding)
+        {
+            return (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
         }
 
         private static void AssertButtonTargetsLocalToggle(string canvasName)

@@ -66,6 +66,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void TickSnapshotRetry(CanvasUiSync owner, float now)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (!owner.hasSnapshot && now >= owner.snapshotCooldownUntil && now >= owner.nextSnapshotRequestTime && owner.snapshotRetryCount < Mathf.Max(1, owner.profile.snapshotRequestRetryCount))
             {
                 owner.RequestSnapshotIfNeeded(false);
@@ -74,6 +79,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void RequestSnapshotIfNeeded(CanvasUiSync owner, bool force)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (!owner.HasActivePeerTarget())
             {
                 owner.hasSnapshot = true;
@@ -135,6 +145,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void TickPeriodicResync(CanvasUiSync owner, float now)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (owner.profile.periodicFullResyncIntervalSeconds <= 0f || now < owner.nextPeriodicResyncTime)
             {
                 return;
@@ -171,6 +186,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendHello(CanvasUiSync owner)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (owner.profile.peerEndpoints == null)
             {
                 return;
@@ -252,6 +272,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendSnapshotCore(CanvasUiSync owner, Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var snapshotId = Guid.NewGuid().ToString("N");
             sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
             foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
@@ -276,6 +301,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void BroadcastCommit(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (owner.profile.peerEndpoints == null)
             {
                 return;
@@ -293,6 +323,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void BroadcastButton(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (owner.profile.peerEndpoints == null)
             {
                 return;
@@ -339,8 +374,11 @@ namespace Mizotake.UnityUiSync
                 owner.client.port = port;
                 owner.client.Send(address, values);
                 owner.sentMessageCount++;
-                owner.sentValueCount += values.Length;
-                owner.sentApproxBytes += EstimatePayloadBytes(address, values);
+                if (owner.profile.enableStatisticsLog)
+                {
+                    owner.sentValueCount += values.Length;
+                    owner.sentApproxBytes += EstimatePayloadBytes(address, values);
+                }
             }
         }
 

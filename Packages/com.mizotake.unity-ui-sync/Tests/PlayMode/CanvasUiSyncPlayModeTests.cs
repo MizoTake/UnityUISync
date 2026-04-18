@@ -397,6 +397,302 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator Toggle_DisableSyncOnRemotePeer_ReenableSync_CatchesUpAndRestoresBidirectionalSync()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            peerB.sync.DisableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.False);
+
+            peerA.toggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerB.toggle.isOn, Is.False);
+
+            peerB.sync.EnableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.True);
+            yield return WaitUntil(() => peerB.toggle.isOn, 120);
+
+            Assert.That(peerB.toggle.isOn, Is.True);
+
+            peerB.toggle.isOn = false;
+            yield return WaitUntil(() => !peerA.toggle.isOn, 60);
+
+            Assert.That(peerA.toggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator Toggle_SetSyncEnabledOnBothPeers_AfterPause_RestoresBidirectionalSync()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            peerA.sync.SetSyncEnabled(false);
+            peerB.sync.SetSyncEnabled(false);
+            Assert.That(peerA.sync.SyncEnabled, Is.False);
+            Assert.That(peerB.sync.SyncEnabled, Is.False);
+
+            yield return WaitFrames(10);
+
+            peerA.sync.SetSyncEnabled(true);
+            peerB.sync.SetSyncEnabled(true);
+            Assert.That(peerA.sync.SyncEnabled, Is.True);
+            Assert.That(peerB.sync.SyncEnabled, Is.True);
+
+            peerA.toggle.isOn = true;
+            yield return WaitUntil(() => peerB.toggle.isOn, 120);
+
+            Assert.That(peerB.toggle.isOn, Is.True);
+
+            peerB.toggle.isOn = false;
+            yield return WaitUntil(() => !peerA.toggle.isOn, 60);
+
+            Assert.That(peerA.toggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator Toggle_RemotePeerReenabledAfterNodeTimeout_RejoinsAndCatchesUp()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureFastReconnectProfile(peerA.sync);
+            ConfigureFastReconnectProfile(peerB.sync);
+            yield return WaitUntil(() => GetNodeCount(peerA.sync) == 1 && GetNodeCount(peerB.sync) == 1, 120);
+
+            peerB.sync.DisableSync();
+            yield return WaitUntil(() => GetNodeCount(peerA.sync) == 0, 120);
+
+            Assert.That(GetNodeCount(peerA.sync), Is.EqualTo(0));
+
+            peerA.toggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerB.toggle.isOn, Is.False);
+
+            peerB.sync.EnableSync();
+            yield return WaitUntil(() => GetNodeCount(peerA.sync) == 1 && peerB.toggle.isOn, 180);
+
+            Assert.That(GetNodeCount(peerA.sync), Is.EqualTo(1));
+            Assert.That(peerB.toggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator Toggle_RemotePeerRepeatedSyncOffOn_KeepsReconnectingToLatestState()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var expected = false;
+            for (var index = 0; index < 4; index++)
+            {
+                peerB.sync.SetSyncEnabled(false);
+                expected = !expected;
+                peerA.toggle.isOn = expected;
+                yield return WaitFrames(10);
+
+                Assert.That(peerB.toggle.isOn, Is.Not.EqualTo(expected));
+
+                peerB.sync.SetSyncEnabled(true);
+                yield return WaitUntil(() => peerB.toggle.isOn == expected, 120);
+
+                Assert.That(peerB.toggle.isOn, Is.EqualTo(expected));
+            }
+
+            peerB.toggle.isOn = !expected;
+            yield return WaitUntil(() => peerA.toggle.isOn == !expected, 60);
+
+            Assert.That(peerA.toggle.isOn, Is.EqualTo(!expected));
+        }
+
+        [UnityTest]
+        public IEnumerator SharedRuntimeControls_RemoteSyncOff_StatefulControlsCatchUpWithinBudget_ButtonDoesNotReplay()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureLowChatterProfile(peerA.sync);
+            ConfigureLowChatterProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var controls = CreateSharedRuntimeControls(peerA.sync, peerB.sync);
+            yield return WaitUntilSharedRuntimeBindingsRegistered(peerA.sync, peerB.sync);
+
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/SharedToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/SharedToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/SharedInputField:InputField"), Is.True);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/SharedInputField:InputField"), Is.True);
+
+            peerB.sync.DisableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.False);
+
+            controls.PeerAToggle.isOn = true;
+            controls.PeerASlider.value = 0.84f;
+            controls.PeerAScrollbar.value = 0.41f;
+            controls.PeerADropdown.value = 1;
+            controls.PeerADropdown.value = 2;
+            controls.PeerAInput.text = "Offline A";
+            controls.PeerAInput.onEndEdit.Invoke("Offline A");
+            controls.PeerAInput.text = "Offline Final";
+            controls.PeerAInput.onEndEdit.Invoke("Offline Final");
+            controls.PeerAButton.onClick.Invoke();
+            yield return WaitFrames(10);
+
+            Assert.That(controls.PeerBToggle.isOn, Is.False);
+            Assert.That(controls.PeerBSlider.value, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(controls.PeerBScrollbar.value, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(controls.PeerBDropdown.value, Is.EqualTo(0));
+            Assert.That(controls.PeerBInput.text, Is.EqualTo(string.Empty));
+            Assert.That(controls.PeerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(controls.PeerBIndicator.text, Is.EqualTo("READY"));
+
+            ResetMessageCounters(peerA.sync);
+            ResetMessageCounters(peerB.sync);
+            peerB.sync.EnableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.True);
+
+            var catchUpFrameCount = 0;
+            while (catchUpFrameCount < 60 && !(controls.PeerBToggle.isOn && Mathf.Abs(controls.PeerBSlider.value - 0.84f) < 0.0001f && Mathf.Abs(controls.PeerBScrollbar.value - 0.41f) < 0.0001f && controls.PeerBDropdown.value == 2 && controls.PeerBInput.text == "Offline Final"))
+            {
+                catchUpFrameCount++;
+                yield return null;
+            }
+
+            Assert.That(controls.PeerBToggle.isOn, Is.True);
+            Assert.That(controls.PeerBSlider.value, Is.EqualTo(0.84f).Within(0.0001f));
+            Assert.That(controls.PeerBScrollbar.value, Is.EqualTo(0.41f).Within(0.0001f));
+            Assert.That(controls.PeerBDropdown.value, Is.EqualTo(2));
+            Assert.That(controls.PeerBInput.text, Is.EqualTo("Offline Final"));
+            Assert.That(controls.PeerBIndicator.text, Is.EqualTo("READY"));
+            Assert.That(catchUpFrameCount, Is.LessThan(60));
+            Assert.That(GetSentMessageCount(peerA.sync), Is.LessThanOrEqualTo(20));
+            Assert.That(GetReceivedMessageCount(peerB.sync), Is.LessThanOrEqualTo(20));
+
+            controls.PeerBButton.onClick.Invoke();
+            yield return WaitUntil(() => controls.PeerAIndicator.text == "CLICKED" && controls.PeerBIndicator.text == "CLICKED", 60);
+
+            Assert.That(controls.PeerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(controls.PeerBIndicator.text, Is.EqualTo("CLICKED"));
+
+            controls.PeerBToggle.isOn = false;
+            yield return WaitUntil(() => !controls.PeerAToggle.isOn, 60);
+
+            Assert.That(controls.PeerAToggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator SharedRuntimeControls_LocalSyncOff_RemoteSnapshotOverridesUnsyncedLocalEditsOnReenable()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureLowChatterProfile(peerA.sync);
+            ConfigureLowChatterProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var controls = CreateSharedRuntimeControls(peerA.sync, peerB.sync);
+            yield return WaitUntilSharedRuntimeBindingsRegistered(peerA.sync, peerB.sync);
+
+            peerA.sync.DisableSync();
+            Assert.That(peerA.sync.SyncEnabled, Is.False);
+
+            controls.PeerAToggle.isOn = true;
+            controls.PeerASlider.value = 0.82f;
+            controls.PeerADropdown.value = 2;
+            controls.PeerAInput.text = "LocalOnly";
+            controls.PeerAInput.onEndEdit.Invoke("LocalOnly");
+            controls.PeerAButton.onClick.Invoke();
+            yield return WaitFrames(10);
+
+            Assert.That(controls.PeerBToggle.isOn, Is.False);
+            Assert.That(controls.PeerBSlider.value, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(controls.PeerBDropdown.value, Is.EqualTo(0));
+            Assert.That(controls.PeerBInput.text, Is.EqualTo(string.Empty));
+            Assert.That(controls.PeerBIndicator.text, Is.EqualTo("READY"));
+
+            controls.PeerBToggle.isOn = true;
+            yield return WaitUntil(() => controls.PeerBToggle.isOn, 30);
+            controls.PeerBSlider.value = 0.27f;
+            controls.PeerBToggle.isOn = false;
+            controls.PeerBDropdown.value = 1;
+            controls.PeerBInput.text = "RemoteState";
+            controls.PeerBInput.onEndEdit.Invoke("RemoteState");
+            yield return WaitFrames(10);
+
+            Assert.That(controls.PeerAToggle.isOn, Is.True);
+            Assert.That(controls.PeerASlider.value, Is.EqualTo(0.82f).Within(0.0001f));
+            Assert.That(controls.PeerADropdown.value, Is.EqualTo(2));
+            Assert.That(controls.PeerAInput.text, Is.EqualTo("LocalOnly"));
+            Assert.That(controls.PeerAIndicator.text, Is.EqualTo("CLICKED"));
+
+            peerA.sync.EnableSync();
+            Assert.That(peerA.sync.SyncEnabled, Is.True);
+            yield return WaitUntil(() => !controls.PeerAToggle.isOn && Mathf.Abs(controls.PeerASlider.value - 0.27f) < 0.0001f && controls.PeerADropdown.value == 1 && controls.PeerAInput.text == "RemoteState", 60);
+
+            Assert.That(controls.PeerAToggle.isOn, Is.False);
+            Assert.That(controls.PeerASlider.value, Is.EqualTo(0.27f).Within(0.0001f));
+            Assert.That(controls.PeerADropdown.value, Is.EqualTo(1));
+            Assert.That(controls.PeerAInput.text, Is.EqualTo("RemoteState"));
+            Assert.That(controls.PeerAIndicator.text, Is.EqualTo("CLICKED"));
+            Assert.That(controls.PeerBIndicator.text, Is.EqualTo("READY"));
+
+            controls.PeerAToggle.isOn = true;
+            yield return WaitUntil(() => controls.PeerBToggle.isOn, 60);
+
+            Assert.That(controls.PeerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedInputField_OnValueChanged_BurstQueuesLatestPendingValueUntilFlush()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureLowChatterProfile(peerA.sync);
+            ConfigureLowChatterProfile(peerB.sync);
+            GetProfile(peerA.sync).stringSendMode = CanvasUiSyncStringSendMode.OnValueChanged;
+            GetProfile(peerB.sync).stringSendMode = CanvasUiSyncStringSendMode.OnValueChanged;
+            GetProfile(peerA.sync).minimumCommitBroadcastIntervalSeconds = 0.2f;
+            GetProfile(peerB.sync).minimumCommitBroadcastIntervalSeconds = 0.2f;
+            yield return null;
+            yield return null;
+
+            var peerARuntimeInput = CreateRuntimeInputField(peerA.sync.transform, "RuntimeInputBurst");
+            var peerBRuntimeInput = CreateRuntimeInputField(peerB.sync.transform, "RuntimeInputBurst");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeInputBurst:InputField") && HasBinding(peerB.sync, "DemoCanvas/RuntimeInputBurst:InputField"), 60);
+
+            var localState = GetLocalState(peerA.sync, "DemoCanvas/RuntimeInputBurst:InputField");
+            SetPublicProperty(localState, "LastBroadcastAt", Time.unscaledTime);
+            ResetMessageCounters(peerA.sync);
+            ResetMessageCounters(peerB.sync);
+
+            peerARuntimeInput.SetTextWithoutNotify("A");
+            peerARuntimeInput.onValueChanged.Invoke("A");
+            peerARuntimeInput.SetTextWithoutNotify("AB");
+            peerARuntimeInput.onValueChanged.Invoke("AB");
+            peerARuntimeInput.SetTextWithoutNotify("ABCD");
+            peerARuntimeInput.onValueChanged.Invoke("ABCD");
+
+            Assert.That(peerBRuntimeInput.text, Is.EqualTo(string.Empty));
+            Assert.That((bool)GetPublicProperty(localState, "HasPendingBroadcast"), Is.True);
+            Assert.That((string)GetPublicProperty(localState, "PendingValue"), Is.EqualTo("ABCD"));
+            Assert.That((float)GetPublicProperty(localState, "NextBroadcastAt"), Is.GreaterThan(Time.unscaledTime));
+            yield return WaitUntil(() => peerBRuntimeInput.text == "ABCD", 60);
+
+            Assert.That(peerBRuntimeInput.text, Is.EqualTo("ABCD"));
+        }
+
+        [UnityTest]
         public IEnumerator RuntimeGeneratedToggle_SyncsAcrossPeers()
         {
             var ports = AllocatePortPair();
@@ -786,6 +1082,88 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             return (peerAPort, peerBPort);
         }
 
+        private sealed class SharedRuntimeControls
+        {
+            public SharedRuntimeControls(Toggle peerAToggle, Toggle peerBToggle, Slider peerASlider, Slider peerBSlider, Scrollbar peerAScrollbar, Scrollbar peerBScrollbar, Dropdown peerADropdown, Dropdown peerBDropdown, InputField peerAInput, InputField peerBInput, Button peerAButton, Button peerBButton, Text peerAIndicator, Text peerBIndicator)
+            {
+                PeerAToggle = peerAToggle;
+                PeerBToggle = peerBToggle;
+                PeerASlider = peerASlider;
+                PeerBSlider = peerBSlider;
+                PeerAScrollbar = peerAScrollbar;
+                PeerBScrollbar = peerBScrollbar;
+                PeerADropdown = peerADropdown;
+                PeerBDropdown = peerBDropdown;
+                PeerAInput = peerAInput;
+                PeerBInput = peerBInput;
+                PeerAButton = peerAButton;
+                PeerBButton = peerBButton;
+                PeerAIndicator = peerAIndicator;
+                PeerBIndicator = peerBIndicator;
+            }
+
+            public Toggle PeerAToggle { get; }
+            public Toggle PeerBToggle { get; }
+            public Slider PeerASlider { get; }
+            public Slider PeerBSlider { get; }
+            public Scrollbar PeerAScrollbar { get; }
+            public Scrollbar PeerBScrollbar { get; }
+            public Dropdown PeerADropdown { get; }
+            public Dropdown PeerBDropdown { get; }
+            public InputField PeerAInput { get; }
+            public InputField PeerBInput { get; }
+            public Button PeerAButton { get; }
+            public Button PeerBButton { get; }
+            public Text PeerAIndicator { get; }
+            public Text PeerBIndicator { get; }
+        }
+
+        private static void ConfigureLowChatterProfile(CanvasUiSync sync)
+        {
+            var profile = GetProfile(sync);
+            profile.helloIntervalSeconds = 10f;
+            profile.snapshotRequestIntervalSeconds = 10f;
+            profile.snapshotRetryCooldownSeconds = 10f;
+        }
+
+        private static SharedRuntimeControls CreateSharedRuntimeControls(CanvasUiSync peerASync, CanvasUiSync peerBSync)
+        {
+            var peerAContainer = CreateRuntimeContainer(peerASync.transform, "OperationsPanel");
+            var peerBContainer = CreateRuntimeContainer(peerBSync.transform, "StatusPanel");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "LocalToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "RemoteToggle");
+            AddBindingId(peerAToggle.gameObject, "SharedToggle");
+            AddBindingId(peerBToggle.gameObject, "SharedToggle");
+            var peerASlider = CreateRuntimeSlider(peerAContainer, "LocalSlider");
+            var peerBSlider = CreateRuntimeSlider(peerBContainer, "RemoteSlider");
+            AddBindingId(peerASlider.gameObject, "SharedSlider");
+            AddBindingId(peerBSlider.gameObject, "SharedSlider");
+            var peerAScrollbar = CreateRuntimeScrollbar(peerAContainer, "LocalScrollbar");
+            var peerBScrollbar = CreateRuntimeScrollbar(peerBContainer, "RemoteScrollbar");
+            AddBindingId(peerAScrollbar.gameObject, "SharedScrollbar");
+            AddBindingId(peerBScrollbar.gameObject, "SharedScrollbar");
+            var peerADropdown = CreateRuntimeDropdown(peerAContainer, "LocalDropdown");
+            var peerBDropdown = CreateRuntimeDropdown(peerBContainer, "RemoteDropdown");
+            AddBindingId(peerADropdown.gameObject, "SharedDropdown");
+            AddBindingId(peerBDropdown.gameObject, "SharedDropdown");
+            var peerAInput = CreateRuntimeInputField(peerAContainer, "LocalInput");
+            var peerBInput = CreateRuntimeInputField(peerBContainer, "RemoteInput");
+            AddBindingId(peerAInput.gameObject, "SharedInputField");
+            AddBindingId(peerBInput.gameObject, "SharedInputField");
+            var peerAIndicator = CreateRuntimeText(peerAContainer, "LocalButtonState", "READY");
+            var peerBIndicator = CreateRuntimeText(peerBContainer, "RemoteButtonState", "READY");
+            var peerAButton = CreateRuntimeButton(peerAContainer, peerAIndicator, "LocalButton");
+            var peerBButton = CreateRuntimeButton(peerBContainer, peerBIndicator, "RemoteButton");
+            AddBindingId(peerAButton.gameObject, "SharedButton");
+            AddBindingId(peerBButton.gameObject, "SharedButton");
+            return new SharedRuntimeControls(peerAToggle, peerBToggle, peerASlider, peerBSlider, peerAScrollbar, peerBScrollbar, peerADropdown, peerBDropdown, peerAInput, peerBInput, peerAButton, peerBButton, peerAIndicator, peerBIndicator);
+        }
+
+        private static IEnumerator WaitUntilSharedRuntimeBindingsRegistered(CanvasUiSync peerASync, CanvasUiSync peerBSync)
+        {
+            yield return WaitUntil(() => HasBinding(peerASync, "DemoCanvas/SharedToggle:Toggle") && HasBinding(peerBSync, "DemoCanvas/SharedToggle:Toggle") && HasBinding(peerASync, "DemoCanvas/SharedSlider:Slider") && HasBinding(peerBSync, "DemoCanvas/SharedSlider:Slider") && HasBinding(peerASync, "DemoCanvas/SharedScrollbar:Scrollbar") && HasBinding(peerBSync, "DemoCanvas/SharedScrollbar:Scrollbar") && HasBinding(peerASync, "DemoCanvas/SharedDropdown:Dropdown") && HasBinding(peerBSync, "DemoCanvas/SharedDropdown:Dropdown") && HasBinding(peerASync, "DemoCanvas/SharedInputField:InputField") && HasBinding(peerBSync, "DemoCanvas/SharedInputField:InputField") && HasBinding(peerASync, "DemoCanvas/SharedButton:Button") && HasBinding(peerBSync, "DemoCanvas/SharedButton:Button"), 60);
+        }
+
         private static Transform CreateRuntimeContainer(Transform parent, string objectName)
         {
             var containerObject = new GameObject(objectName, typeof(RectTransform));
@@ -872,11 +1250,28 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             return component;
         }
 
+        private static void ConfigureFastReconnectProfile(CanvasUiSync sync)
+        {
+            var profile = GetProfile(sync);
+            profile.helloIntervalSeconds = 0.02f;
+            profile.nodeTimeoutSeconds = 0.05f;
+            profile.snapshotRequestIntervalSeconds = 0.02f;
+            profile.snapshotRequestRetryCount = 10;
+            profile.snapshotRetryCooldownSeconds = 0.02f;
+        }
+
         private static void SetPrivateField(object instance, string fieldName, object value)
         {
             var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, $"field {fieldName} was not found");
             field.SetValue(instance, value);
+        }
+
+        private static void InvokePrivate(object instance, string methodName, params object[] args)
+        {
+            var method = instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, $"method {methodName} was not found");
+            method.Invoke(instance, args);
         }
 
         private static IEnumerator LoadSampleScene()
@@ -921,9 +1316,54 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             return ((IDictionary)GetPrivateField(sync, "bindings")).Count;
         }
 
+        private static int GetNodeCount(CanvasUiSync sync)
+        {
+            return ((IDictionary)GetPrivateField(sync, "nodes")).Count;
+        }
+
         private static bool HasBinding(CanvasUiSync sync, string syncId)
         {
             return ((IDictionary)GetPrivateField(sync, "bindings")).Contains(syncId);
+        }
+
+        private static object GetBinding(CanvasUiSync sync, string syncId)
+        {
+            return ((IDictionary)GetPrivateField(sync, "bindings"))[syncId];
+        }
+
+        private static object GetLocalState(CanvasUiSync sync, string syncId)
+        {
+            return ((IDictionary)GetPrivateField(sync, "localStates"))[syncId];
+        }
+
+        private static int GetSentMessageCount(CanvasUiSync sync)
+        {
+            return (int)GetPrivateField(sync, "sentMessageCount");
+        }
+
+        private static int GetReceivedMessageCount(CanvasUiSync sync)
+        {
+            return (int)GetPrivateField(sync, "receivedMessageCount");
+        }
+
+        private static void ResetMessageCounters(CanvasUiSync sync)
+        {
+            SetPrivateField(sync, "sentMessageCount", 0);
+            SetPrivateField(sync, "receivedMessageCount", 0);
+        }
+
+        private static void SetPublicProperty(object instance, string propertyName, object value)
+        {
+            var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+            Assert.That(property, Is.Not.Null, $"property {propertyName} was not found");
+            property.SetValue(instance, value);
+        }
+
+        private static object GetPublicProperty(object instance, string propertyName)
+        {
+            var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+            Assert.That(property, Is.Not.Null, $"property {propertyName} was not found");
+            return property.GetValue(instance);
         }
 
         private static string DescribeBindings(CanvasUiSync sync)
@@ -997,6 +1437,11 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, $"field {fieldName} was not found");
             return field.GetValue(instance);
+        }
+
+        private static CanvasUiSyncProfile GetProfile(CanvasUiSync sync)
+        {
+            return (CanvasUiSyncProfile)GetPrivateField(sync, "profile");
         }
 
         private static CanvasUiSyncSamplePresenter FindPresenter(string canvasName)

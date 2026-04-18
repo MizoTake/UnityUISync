@@ -28,6 +28,8 @@ namespace Mizotake.UnityUiSync
         [SerializeField] internal CanvasUiSyncProfile profile;
         [SerializeField] internal string canvasIdOverride = string.Empty;
         [SerializeField] internal bool rescanOnEnable;
+        [SerializeField] internal bool syncEnabled = true;
+        [SerializeField] internal List<Component> excludedComponents = new List<Component>();
 
         internal readonly Dictionary<string, UiSyncBinding> bindings = new Dictionary<string, UiSyncBinding>();
         internal readonly List<UiSyncBinding> continuousBindings = new List<UiSyncBinding>();
@@ -46,6 +48,7 @@ namespace Mizotake.UnityUiSync
         internal readonly List<string> expiredSnapshotIds = new List<string>();
         internal readonly List<string> expiredNodeIds = new List<string>();
         internal readonly List<string> bindingKeyScratch = new List<string>();
+        internal readonly Dictionary<Transform, string> pathCacheScratch = new Dictionary<Transform, string>();
         internal readonly List<string> pathSegmentScratch = new List<string>();
         internal readonly List<Toggle> toggleScratch = new List<Toggle>();
         internal readonly List<Toggle> dropdownItemToggleScratch = new List<Toggle>();
@@ -89,6 +92,8 @@ namespace Mizotake.UnityUiSync
         internal uOscClient client;
         internal Canvas canvasComponent;
         internal GameObject transportHost;
+
+        public bool SyncEnabled => syncEnabled;
 
         internal sealed class NodeState
         {
@@ -269,9 +274,49 @@ namespace Mizotake.UnityUiSync
             }
         }
 
+        public void SetSyncEnabled(bool value)
+        {
+            if (syncEnabled == value)
+            {
+                return;
+            }
+
+            syncEnabled = value;
+            if (!initialized)
+            {
+                return;
+            }
+
+            if (!syncEnabled)
+            {
+                return;
+            }
+
+            RefreshBindingsIfHierarchyChanged(true);
+            hasSnapshot = false;
+            snapshotRetryCount = 0;
+            snapshotCooldownUntil = 0f;
+            nextHelloTime = Time.unscaledTime;
+            nextSnapshotRequestTime = Time.unscaledTime;
+            nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
+            nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            SendHello();
+            RequestSnapshotIfNeeded(true);
+        }
+
+        public void EnableSync()
+        {
+            SetSyncEnabled(true);
+        }
+
+        public void DisableSync()
+        {
+            SetSyncEnabled(false);
+        }
+
         private void Update()
         {
-            if (!initialized)
+            if (!initialized || !syncEnabled)
             {
                 return;
             }
@@ -457,6 +502,24 @@ namespace Mizotake.UnityUiSync
             }
 
             stateCacheKeysToRemove.Clear();
+        }
+
+        internal bool IsComponentExcluded(Component component)
+        {
+            if (component == null || excludedComponents == null || excludedComponents.Count == 0)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < excludedComponents.Count; index++)
+            {
+                if (excludedComponents[index] == component)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal void ScanBindings()

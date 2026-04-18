@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Mizotake.UnityUiSync
 {
@@ -44,7 +46,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalStateChanged(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool force)
         {
-            if (owner.suppressionCount > 0)
+            if (!owner.syncEnabled || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -78,7 +80,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalButtonClicked(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding)
         {
-            if (owner.suppressionCount > 0)
+            if (!owner.syncEnabled || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -159,10 +161,15 @@ namespace Mizotake.UnityUiSync
 
         internal static void CommitLocalState(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool applyToLocalUi, CanvasUiSync.StateStamp stamp)
         {
+            object previousValue = null;
             if (!owner.localStates.TryGetValue(binding.SyncId, out var state))
             {
                 state = new CanvasUiSync.LocalStateRecord(value, binding.ValueType, stamp);
                 owner.localStates[binding.SyncId] = state;
+            }
+            else
+            {
+                previousValue = state.Value;
             }
 
             var hadPendingBroadcast = state.HasPendingBroadcast;
@@ -193,6 +200,11 @@ namespace Mizotake.UnityUiSync
                 state.NextBroadcastAt = state.LastBroadcastAt + minimumCommitBroadcastIntervalSeconds;
                 owner.nextPendingCommitTime = Mathf.Min(owner.nextPendingCommitTime, state.NextBroadcastAt);
             }
+
+            if (IsDropdownBinding(binding))
+            {
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, true);
+            }
         }
 
         internal static void CommitLocalButton(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, CanvasUiSync.StateStamp stamp)
@@ -203,16 +215,25 @@ namespace Mizotake.UnityUiSync
 
         internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot)
         {
-            if (!owner.bindings.TryGetValue(syncId, out var binding) && (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding)))
+            if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
-                if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
+                if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing))
                 {
+                    if (!owner.IsIncomingStampNewer(existing.Stamp, stamp))
+                    {
+                        return;
+                    }
+
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
                     return;
                 }
 
-                owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
-                owner.HandleUnknownSyncId(syncId);
-                return;
+                if (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
+                {
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
+                    owner.HandleUnknownSyncId(syncId);
+                    return;
+                }
             }
 
             if (!string.Equals(binding.ValueType, valueType, StringComparison.Ordinal))
@@ -226,6 +247,8 @@ namespace Mizotake.UnityUiSync
                 state = new CanvasUiSync.LocalStateRecord(value, valueType, stamp);
                 owner.localStates[syncId] = state;
             }
+
+            var previousValue = state.Value;
 
             if (!owner.IsIncomingStampNewer(state.Stamp, stamp))
             {
@@ -251,6 +274,10 @@ namespace Mizotake.UnityUiSync
                 state.Stamp = stamp;
                 state.PendingValue = observedValue;
                 state.PendingStamp = stamp;
+                if (IsDropdownBinding(binding))
+                {
+                    SyncDropdownItemToggleStates(owner, binding, previousValue, observedValue, stamp, false);
+                }
                 return;
             }
 
@@ -259,6 +286,10 @@ namespace Mizotake.UnityUiSync
             state.PendingValue = value;
             state.PendingStamp = stamp;
             owner.ApplyValueToBinding(binding, value);
+            if (IsDropdownBinding(binding))
+            {
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false);
+            }
         }
 
         internal static void FlushPendingCommits(CanvasUiSync owner, float now)
@@ -309,6 +340,120 @@ namespace Mizotake.UnityUiSync
             }
 
             return Equals(left, right);
+        }
+
+        private static bool IsDropdownBinding(CanvasUiSync.UiSyncBinding binding)
+        {
+            return binding != null && (string.Equals(binding.ValueType, "Dropdown", StringComparison.Ordinal) || string.Equals(binding.ValueType, "TMP_Dropdown", StringComparison.Ordinal));
+        }
+
+        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object previousValue, object nextValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        {
+            if (binding.Component is Dropdown dropdown)
+            {
+                SyncDropdownItemToggleStates(owner, dropdown.transform, dropdown.options.Count, "DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, dropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, dropdown.options.Count), stamp, broadcastChanges);
+                return;
+            }
+
+            if (binding.Component is TMP_Dropdown tmpDropdown)
+            {
+                SyncDropdownItemToggleStates(owner, tmpDropdown.transform, tmpDropdown.options.Count, "TMP_DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, tmpDropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, tmpDropdown.options.Count), stamp, broadcastChanges);
+            }
+        }
+
+        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, Transform dropdownTransform, int optionCount, string optionBindingPrefix, int previousSelectedIndex, int nextSelectedIndex, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        {
+            if (optionCount <= 0 || nextSelectedIndex < 0 || nextSelectedIndex >= optionCount)
+            {
+                return;
+            }
+
+            if (previousSelectedIndex >= 0 && previousSelectedIndex < optionCount)
+            {
+                if (previousSelectedIndex == nextSelectedIndex)
+                {
+                    SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                    return;
+                }
+
+                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, previousSelectedIndex, false, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                return;
+            }
+
+            for (var optionIndex = 0; optionIndex < optionCount; optionIndex++)
+            {
+                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, optionIndex, optionIndex == nextSelectedIndex, stamp, broadcastChanges);
+            }
+        }
+
+        private static void SyncDropdownItemToggleState(CanvasUiSync owner, Transform dropdownTransform, string optionBindingPrefix, int optionIndex, bool targetValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        {
+            var syncId = owner.BuildSyncId(dropdownTransform, optionBindingPrefix + optionIndex + "]");
+            if (!owner.bindings.TryGetValue(syncId, out var optionBinding))
+            {
+                return;
+            }
+
+            if (broadcastChanges)
+            {
+                if (owner.localStates.TryGetValue(syncId, out var currentState) && AreEquivalent(currentState.Value, targetValue))
+                {
+                    return;
+                }
+
+                owner.CommitLocalState(optionBinding, targetValue, true, stamp);
+                return;
+            }
+
+            var pendingCommitScheduleChanged = false;
+            if (!owner.localStates.TryGetValue(syncId, out var state))
+            {
+                state = new CanvasUiSync.LocalStateRecord(targetValue, optionBinding.ValueType, stamp);
+                owner.localStates[syncId] = state;
+            }
+            else
+            {
+                if (AreEquivalent(state.Value, targetValue) && !state.HasPendingBroadcast)
+                {
+                    return;
+                }
+
+                if (state.HasPendingBroadcast)
+                {
+                    state.HasPendingBroadcast = false;
+                    pendingCommitScheduleChanged = true;
+                }
+
+                state.Value = targetValue;
+                state.Stamp = stamp;
+                state.PendingValue = targetValue;
+                state.PendingStamp = stamp;
+            }
+
+            owner.ApplyValueToBinding(optionBinding, targetValue);
+            if (pendingCommitScheduleChanged)
+            {
+                RecalculateNextPendingCommitTime(owner);
+            }
+        }
+
+        private static int TryReadDropdownSelectionIndex(object value, int optionCount)
+        {
+            if (value == null || optionCount <= 0)
+            {
+                return -1;
+            }
+
+            try
+            {
+                var selectionIndex = Convert.ToInt32(value);
+                return selectionIndex >= 0 && selectionIndex < optionCount ? selectionIndex : -1;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         private static void RecalculateNextPendingCommitTime(CanvasUiSync owner)

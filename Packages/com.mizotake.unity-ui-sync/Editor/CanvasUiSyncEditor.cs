@@ -9,12 +9,16 @@ namespace Mizotake.UnityUiSync.Editor
         private SerializedProperty profileProperty;
         private SerializedProperty canvasIdOverrideProperty;
         private SerializedProperty rescanOnEnableProperty;
+        private SerializedProperty syncEnabledProperty;
+        private SerializedProperty excludedComponentsProperty;
 
         private void OnEnable()
         {
             profileProperty = serializedObject.FindProperty("profile");
             canvasIdOverrideProperty = serializedObject.FindProperty("canvasIdOverride");
             rescanOnEnableProperty = serializedObject.FindProperty("rescanOnEnable");
+            syncEnabledProperty = serializedObject.FindProperty("syncEnabled");
+            excludedComponentsProperty = serializedObject.FindProperty("excludedComponents");
         }
 
         public override void OnInspectorGUI()
@@ -54,6 +58,8 @@ namespace Mizotake.UnityUiSync.Editor
             EditorGUILayout.HelpBox("同じ Profile を使っていても、Scene ごとに上書きしたい補助設定だけをここで持ちます。", MessageType.None);
             EditorGUILayout.PropertyField(canvasIdOverrideProperty, new GUIContent("Canvas ID 上書き", "未指定なら GameObject 名を使います。複数 Canvas を区別したいときだけ設定します。"));
             EditorGUILayout.PropertyField(rescanOnEnableProperty, new GUIContent("Enable 時に再スキャン", "実行中に生成された Canvas 配下 UI は自動再スキャンされます。これは Enable/Disable をまたぐ再構築に備える補助設定です。"));
+            EditorGUILayout.PropertyField(syncEnabledProperty, new GUIContent("同期を有効化", "off の間は送受信と定期同期を止めます。API からも切り替えられます。"));
+            EditorGUILayout.PropertyField(excludedComponentsProperty, new GUIContent("同期除外 UI", "ここに登録した UI コンポーネントは同期対象として走査しません。"));
 
             serializedObject.ApplyModifiedProperties();
         }

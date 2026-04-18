@@ -14,7 +14,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleReceivedPayload(CanvasUiSync owner, string address, object[] values)
         {
-            if (values == null)
+            if (!owner.syncEnabled || values == null)
             {
                 return;
             }
@@ -26,6 +26,11 @@ namespace Mizotake.UnityUiSync
         internal static void RecordReceivedPayload(CanvasUiSync owner, string address, object[] values)
         {
             owner.receivedMessageCount++;
+            if (!owner.profile.enableStatisticsLog)
+            {
+                return;
+            }
+
             owner.receivedValueCount += values.Length;
             owner.receivedApproxBytes += CanvasUiSync.EstimatePayloadBytes(address, values);
         }
@@ -52,6 +57,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleHello(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
             if (values.Length < 4 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
@@ -95,6 +105,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleRequestSnapshot(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var incomingCanvasId = values.Length > 1 ? ReadString(values, 1) : null;
             if (values.Length < 3 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
@@ -125,6 +140,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleBeginSnapshot(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var incomingCanvasId = values.Length > 1 ? ReadString(values, 1) : null;
             if (values.Length < 4 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
@@ -143,6 +163,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleSnapshotState(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (values.Length < 8)
             {
                 return;
@@ -167,6 +192,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleEndSnapshot(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             if (values.Length < 4)
             {
                 return;
@@ -191,6 +221,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleCommitState(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
             if (values.Length < 8 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
@@ -215,6 +250,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleCommitButton(CanvasUiSync owner, object[] values)
         {
+            if (!owner.syncEnabled)
+            {
+                return;
+            }
+
             var incomingCanvasId = values.Length > 2 ? ReadString(values, 2) : null;
             if (values.Length < 7 || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
@@ -233,16 +273,25 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (!owner.bindings.TryGetValue(syncId, out var binding) && (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding)))
+            if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
-                if (owner.pendingRemoteButtonCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
+                if (owner.pendingRemoteButtonCommits.TryGetValue(syncId, out var existing))
                 {
+                    if (!owner.IsIncomingStampNewer(existing.Stamp, stamp))
+                    {
+                        return;
+                    }
+
+                    owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime);
                     return;
                 }
 
-                owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime);
-                owner.HandleUnknownSyncId(syncId);
-                return;
+                if (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
+                {
+                    owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime);
+                    owner.HandleUnknownSyncId(syncId);
+                    return;
+                }
             }
 
             owner.ApplyButtonCommit(binding, syncId, stamp);
