@@ -44,5 +44,44 @@ namespace Mizotake.UnityUiSync
         {
             return this.owner == owner && uiDropdown == null && tmpDropdown == dropdown;
         }
+
+        private void OnEnable()
+        {
+            NotifyRuntimeRootStateChanged(gameObject.activeInHierarchy ? gameObject : null);
+        }
+
+        private void OnDisable()
+        {
+            NotifyRuntimeRootStateChanged(null);
+        }
+
+        private void OnDestroy()
+        {
+            NotifyRuntimeRootStateChanged(null);
+        }
+
+        private void NotifyRuntimeRootStateChanged(GameObject runtimeRoot)
+        {
+            if (owner == null)
+            {
+                return;
+            }
+
+            if (uiDropdown != null)
+            {
+                if (uiDropdown.template == transform)
+                {
+                    return;
+                }
+
+                owner.HandleDropdownRuntimeRootChanged(uiDropdown, runtimeRoot);
+                return;
+            }
+
+            if (tmpDropdown != null && tmpDropdown.template != transform)
+            {
+                owner.HandleDropdownRuntimeRootChanged(tmpDropdown, runtimeRoot);
+            }
+        }
     }
 }

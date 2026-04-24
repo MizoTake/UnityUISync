@@ -42,10 +42,11 @@ Package Manager から `Import Samples > Basic Setup` を実行すると、`Samp
 同梱サンプルには以下が含まれます。
 
 - `Scenes/UnityUiSyncSample.unity`
+- `Scenes/UnityUiSyncPerformanceSample.unity`
 - `Profiles/PeerA.asset`
 - `Profiles/PeerB.asset`
 
-サンプルは 1 つのシーンに `PeerA` と `PeerB` の Canvas を並べた構成で、`PeerA` は `9000`、`PeerB` は `9001` を使用します。
+`UnityUiSyncSample.unity` は基本動作確認用、`UnityUiSyncPerformanceSample.unity` は 1 Canvas あたり 128 個の同期 UI と簡易オーバーレイを持つ測定用です。`PeerA` は `9000`、`PeerB` は `9001` を使用します。
 
 ## 同期 ID
 

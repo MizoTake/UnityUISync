@@ -20,9 +20,11 @@ namespace Mizotake.UnityUiSync
                 Dropdowns = owner.dropdownScratch;
                 TmpDropdowns = owner.tmpDropdownScratch;
                 pathCache = owner.pathCacheScratch;
+                pathHashCache = owner.pathHashCacheScratch;
                 dropdownTemplateRoots = owner.dropdownTemplateRootScratch;
                 dropdownRuntimeRoots = owner.dropdownRuntimeRootScratch;
                 pathCache.Clear();
+                pathHashCache.Clear();
                 CollectComponentsInChildren(owner, Dropdowns);
                 CollectComponentsInChildren(owner, TmpDropdowns);
                 EnsureDropdownTemplateMarkers(owner, Dropdowns);
@@ -35,6 +37,7 @@ namespace Mizotake.UnityUiSync
 
             private readonly CanvasUiSync owner;
             private readonly Dictionary<Transform, string> pathCache;
+            private readonly Dictionary<Transform, int> pathHashCache;
             private readonly List<Transform> dropdownTemplateRoots;
             private readonly List<Transform> dropdownRuntimeRoots;
             public List<Dropdown> Dropdowns { get; }
@@ -43,6 +46,16 @@ namespace Mizotake.UnityUiSync
             public string BuildSyncId(Transform target, string componentType)
             {
                 return CanvasUiSyncBindingsService.BuildSyncId(owner, target, componentType, pathCache);
+            }
+
+            public int BuildSyncIdFingerprint(Transform target, string componentType)
+            {
+                return CanvasUiSyncBindingsService.BuildSyncIdFingerprint(owner, target, componentType, pathHashCache);
+            }
+
+            public int BuildIndexedSyncIdFingerprint(Transform target, string componentTypePrefix, int index)
+            {
+                return CanvasUiSyncBindingsService.BuildIndexedSyncIdFingerprint(owner, target, componentTypePrefix, index, pathHashCache);
             }
 
             public bool IsTemplateComponent(Transform target)
@@ -129,6 +142,8 @@ namespace Mizotake.UnityUiSync
             owner.bindings.Clear();
             owner.continuousBindings.Clear();
             owner.polledBindings.Clear();
+            owner.dropdownRuntimeRootCache.Clear();
+            owner.tmpDropdownRuntimeRootCache.Clear();
             var context = new BindingScanContext(owner);
             RegisterToggles(owner, context);
             RegisterSliders(owner, context);
@@ -233,7 +248,7 @@ namespace Mizotake.UnityUiSync
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "DropdownExpanded"), "DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false, true));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "DropdownExpanded"), "DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false));
                 RegisterDropdownItemToggles(owner, component, context);
             }
         }
@@ -258,7 +273,7 @@ namespace Mizotake.UnityUiSync
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false, true));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded", () => IsDropdownExpanded(owner, component), value => SetDropdownExpanded(owner, component, Convert.ToBoolean(value)), false));
                 RegisterTmpDropdownItemToggles(owner, component, context);
             }
         }
@@ -428,6 +443,82 @@ namespace Mizotake.UnityUiSync
             return path;
         }
 
+        private static int BuildSyncIdFingerprint(CanvasUiSync owner, Transform target, string componentType, Dictionary<Transform, int> pathHashCache)
+        {
+            unchecked
+            {
+                var hash = 17;
+                hash = CombineFingerprint(hash, owner.canvasId);
+                var bindingId = ReadExplicitBindingId(target);
+                if (!string.IsNullOrWhiteSpace(bindingId))
+                {
+                    hash = CombineFingerprint(hash, 1);
+                    hash = CombineFingerprint(hash, bindingId);
+                }
+                else
+                {
+                    hash = CombineFingerprint(hash, 2);
+                    hash = CombineFingerprint(hash, BuildPathFingerprint(owner, target, pathHashCache));
+                }
+
+                hash = CombineFingerprint(hash, componentType);
+                return hash;
+            }
+        }
+
+        private static int BuildIndexedSyncIdFingerprint(CanvasUiSync owner, Transform target, string componentTypePrefix, int index, Dictionary<Transform, int> pathHashCache)
+        {
+            unchecked
+            {
+                var hash = BuildSyncIdFingerprint(owner, target, componentTypePrefix, pathHashCache);
+                hash = CombineFingerprint(hash, '[');
+                hash = CombineFingerprint(hash, index);
+                return hash;
+            }
+        }
+
+        private static int BuildPathFingerprint(CanvasUiSync owner, Transform target, Dictionary<Transform, int> pathHashCache)
+        {
+            if (target == null)
+            {
+                return 17;
+            }
+
+            if (pathHashCache != null && pathHashCache.TryGetValue(target, out var cachedHash))
+            {
+                return cachedHash;
+            }
+
+            int hash;
+            if (target == owner.transform)
+            {
+                hash = CombineFingerprint(17, owner.transform.name);
+            }
+            else
+            {
+                var segmentHash = ComputePathSegmentFingerprint(target);
+                hash = target.parent == null || target.parent == owner.transform ? CombineFingerprint(17, segmentHash) : CombineFingerprint(BuildPathFingerprint(owner, target.parent, pathHashCache), segmentHash);
+            }
+
+            if (pathHashCache != null)
+            {
+                pathHashCache[target] = hash;
+            }
+
+            return hash;
+        }
+
+        private static int ComputePathSegmentFingerprint(Transform target)
+        {
+            unchecked
+            {
+                var hash = 17;
+                hash = CombineFingerprint(hash, target != null ? target.name : string.Empty);
+                hash = CombineFingerprint(hash, target != null ? target.GetSiblingIndex() : -1);
+                return hash;
+            }
+        }
+
         private static string BuildPathSegment(Transform target)
         {
             if (target == null)
@@ -518,8 +609,14 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            owner.nextHierarchyRescanTime = now + CanvasUiSync.RuntimeHierarchyRescanIntervalSeconds;
-            owner.RefreshBindingsIfHierarchyChanged(false);
+            if (owner.RefreshBindingsIfHierarchyChanged(false))
+            {
+                owner.ResetRuntimeHierarchyRescanSchedule(now);
+                return;
+            }
+
+            owner.currentHierarchyRescanIntervalSeconds = Mathf.Min(CanvasUiSync.RuntimeHierarchyRescanMaxIntervalSeconds, owner.currentHierarchyRescanIntervalSeconds * 2f);
+            owner.nextHierarchyRescanTime = now + owner.currentHierarchyRescanIntervalSeconds;
         }
 
         internal static bool TryRefreshBindingsForSyncId(CanvasUiSync owner, string syncId)
@@ -533,21 +630,22 @@ namespace Mizotake.UnityUiSync
             return owner.bindings.ContainsKey(syncId);
         }
 
-        internal static void RefreshBindingsIfHierarchyChanged(CanvasUiSync owner, bool force)
+        internal static bool RefreshBindingsIfHierarchyChanged(CanvasUiSync owner, bool force)
         {
             var signature = ComputeBindingHierarchySignature(owner);
             if (!force && signature == owner.bindingHierarchySignature)
             {
-                return;
+                return false;
             }
 
             var previousRegistryHash = owner.registryHash;
             owner.ScanBindings();
             owner.InitializeLocalState();
             owner.bindingHierarchySignature = signature;
+            owner.ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             if (!owner.initialized || string.Equals(previousRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
-                return;
+                return true;
             }
 
             owner.hasSnapshot = false;
@@ -556,6 +654,7 @@ namespace Mizotake.UnityUiSync
             owner.snapshotCooldownUntil = 0f;
             owner.SendHello();
             owner.RequestSnapshotIfNeeded(true);
+            return true;
         }
 
         internal static int ComputeBindingHierarchySignature(CanvasUiSync owner)
@@ -593,7 +692,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                hash = (hash * 31) + ComputeStableHash(context.HasValue ? context.Value.BuildSyncId(component.transform, componentType) : owner.BuildSyncId(component.transform, componentType));
+                hash = (hash * 31) + (context.HasValue ? context.Value.BuildSyncIdFingerprint(component.transform, componentType) : BuildSyncIdFingerprint(owner, component.transform, componentType, null));
             }
         }
 
@@ -626,7 +725,7 @@ namespace Mizotake.UnityUiSync
 
                 for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
                 {
-                    hash = (hash * 31) + ComputeStableHash(context.BuildSyncId(dropdown.transform, "DropdownItemToggle[" + optionIndex + "]"));
+                    hash = (hash * 31) + context.BuildIndexedSyncIdFingerprint(dropdown.transform, "DropdownItemToggle", optionIndex);
                 }
             }
         }
@@ -642,7 +741,7 @@ namespace Mizotake.UnityUiSync
 
                 for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
                 {
-                    hash = (hash * 31) + ComputeStableHash(context.BuildSyncId(dropdown.transform, "TMP_DropdownItemToggle[" + optionIndex + "]"));
+                    hash = (hash * 31) + context.BuildIndexedSyncIdFingerprint(dropdown.transform, "TMP_DropdownItemToggle", optionIndex);
                 }
             }
         }
@@ -899,6 +998,72 @@ namespace Mizotake.UnityUiSync
             }
         }
 
+        internal static void HandleDropdownRuntimeRootChanged(CanvasUiSync owner, Dropdown dropdown, GameObject runtimeRoot)
+        {
+            if (owner == null || dropdown == null)
+            {
+                return;
+            }
+
+            if (runtimeRoot == null)
+            {
+                owner.dropdownRuntimeRootCache.Remove(dropdown);
+            }
+            else
+            {
+                owner.dropdownRuntimeRootCache[dropdown] = runtimeRoot;
+            }
+
+            NotifyDropdownExpandedStateChanged(owner, owner.BuildSyncId(dropdown.transform, "DropdownExpanded"), runtimeRoot != null);
+        }
+
+        internal static void HandleDropdownRuntimeRootChanged(CanvasUiSync owner, TMP_Dropdown dropdown, GameObject runtimeRoot)
+        {
+            if (owner == null || dropdown == null)
+            {
+                return;
+            }
+
+            if (runtimeRoot == null)
+            {
+                owner.tmpDropdownRuntimeRootCache.Remove(dropdown);
+            }
+            else
+            {
+                owner.tmpDropdownRuntimeRootCache[dropdown] = runtimeRoot;
+            }
+
+            NotifyDropdownExpandedStateChanged(owner, owner.BuildSyncId(dropdown.transform, "TMP_DropdownExpanded"), runtimeRoot != null);
+        }
+
+        private static void NotifyDropdownExpandedStateChanged(CanvasUiSync owner, string syncId, bool isExpanded)
+        {
+            if (string.IsNullOrEmpty(syncId) || !owner.bindings.TryGetValue(syncId, out var binding))
+            {
+                return;
+            }
+
+            if (owner.localStates.TryGetValue(syncId, out var state) && state.Value is bool current && current == isExpanded)
+            {
+                return;
+            }
+
+            owner.OnLocalStateChanged(binding, isExpanded, false);
+        }
+
+        private static int CombineFingerprint(int hash, string value)
+        {
+            return CombineFingerprint(hash, ComputeStableHash(value));
+        }
+
+        private static int CombineFingerprint(int hash, int value)
+        {
+            unchecked
+            {
+                return (hash * 31) + value;
+            }
+        }
+
         private static void CollectComponentsInChildren<TComponent>(CanvasUiSync owner, List<TComponent> results) where TComponent : Component
         {
             results.Clear();
@@ -938,9 +1103,31 @@ namespace Mizotake.UnityUiSync
                 return null;
             }
 
+            if (owner.dropdownRuntimeRootCache.TryGetValue(dropdown, out var cachedRuntimeRoot))
+            {
+                if (cachedRuntimeRoot != null)
+                {
+                    return cachedRuntimeRoot.transform;
+                }
+
+                owner.dropdownRuntimeRootCache.Remove(dropdown);
+            }
+
             CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
             var markedRoot = FindMarkedRuntimeDropdownRoot(owner, dropdown);
-            return markedRoot != null ? markedRoot : FindRuntimeDropdownRootByHeuristic(dropdown.template);
+            if (markedRoot != null)
+            {
+                owner.dropdownRuntimeRootCache[dropdown] = markedRoot.gameObject;
+                return markedRoot;
+            }
+
+            var heuristicRoot = FindRuntimeDropdownRootByHeuristic(dropdown.template);
+            if (heuristicRoot != null)
+            {
+                owner.dropdownRuntimeRootCache[dropdown] = heuristicRoot.gameObject;
+            }
+
+            return heuristicRoot;
         }
 
         private static Transform FindRuntimeDropdownRoot(CanvasUiSync owner, TMP_Dropdown dropdown)
@@ -950,9 +1137,31 @@ namespace Mizotake.UnityUiSync
                 return null;
             }
 
+            if (owner.tmpDropdownRuntimeRootCache.TryGetValue(dropdown, out var cachedRuntimeRoot))
+            {
+                if (cachedRuntimeRoot != null)
+                {
+                    return cachedRuntimeRoot.transform;
+                }
+
+                owner.tmpDropdownRuntimeRootCache.Remove(dropdown);
+            }
+
             CanvasUiSyncDropdownRuntimeMarker.GetOrAdd(dropdown.template.gameObject).Configure(owner, dropdown);
             var markedRoot = FindMarkedRuntimeDropdownRoot(owner, dropdown);
-            return markedRoot != null ? markedRoot : FindRuntimeDropdownRootByHeuristic(dropdown.template);
+            if (markedRoot != null)
+            {
+                owner.tmpDropdownRuntimeRootCache[dropdown] = markedRoot.gameObject;
+                return markedRoot;
+            }
+
+            var heuristicRoot = FindRuntimeDropdownRootByHeuristic(dropdown.template);
+            if (heuristicRoot != null)
+            {
+                owner.tmpDropdownRuntimeRootCache[dropdown] = heuristicRoot.gameObject;
+            }
+
+            return heuristicRoot;
         }
 
         private static Transform FindMarkedRuntimeDropdownRoot(CanvasUiSync owner, Dropdown dropdown)

@@ -11,6 +11,7 @@ namespace Mizotake.UnityUiSync.Editor
     public static class CanvasUiSyncSampleBuilder
     {
         private const string AssetScenePath = "Assets/Scenes/UnityUiSyncSample.unity";
+        private const string AssetPerformanceScenePath = "Assets/Scenes/UnityUiSyncPerformanceSample.unity";
         private const string AssetSampleRootPath = "Assets/UnityUISyncSamples";
         private const string AssetProfileDirectoryPath = AssetSampleRootPath + "/Profiles";
         private const string AssetReadmePath = AssetSampleRootPath + "/README.txt";
@@ -19,8 +20,16 @@ namespace Mizotake.UnityUiSync.Editor
         private const string PackageProfileDirectoryPath = PackageSampleRootPath + "/Profiles";
         private const string PackageSceneDirectoryPath = PackageSampleRootPath + "/Scenes";
         private const string PackageScenePath = PackageSceneDirectoryPath + "/UnityUiSyncSample.unity";
+        private const string PackagePerformanceScenePath = PackageSceneDirectoryPath + "/UnityUiSyncPerformanceSample.unity";
         private const string PackageReadmePath = PackageSampleRootPath + "/README.txt";
         private const string DemoCanvasId = "DemoCanvas";
+        private const int PerformanceToggleCount = 48;
+        private const int PerformanceSliderCount = 24;
+        private const int PerformanceScrollbarCount = 24;
+        private const int PerformanceDropdownCount = 16;
+        private const int PerformanceInputFieldCount = 8;
+        private const int PerformanceButtonCount = 8;
+        private const int PerformanceDropdownOptionCount = 6;
 
         [MenuItem("Tools/Unity UI Sync/Rebuild Sample Assets")]
         public static void RebuildSampleAssets()
@@ -34,10 +43,12 @@ namespace Mizotake.UnityUiSync.Editor
             BuildProfiles(AssetProfileDirectoryPath);
             BuildReadme(AssetReadmePath);
             BuildScene(AssetScenePath, AssetProfileDirectoryPath + "/PeerA.asset", AssetProfileDirectoryPath + "/PeerB.asset");
+            BuildPerformanceScene(AssetPerformanceScenePath, AssetProfileDirectoryPath + "/PeerA.asset", AssetProfileDirectoryPath + "/PeerB.asset");
             MirrorAssetToPackageSample(AssetProfileDirectoryPath + "/PeerA.asset", PackageProfileDirectoryPath + "/PeerA.asset");
             MirrorAssetToPackageSample(AssetProfileDirectoryPath + "/PeerB.asset", PackageProfileDirectoryPath + "/PeerB.asset");
             MirrorAssetToPackageSample(AssetReadmePath, PackageReadmePath);
             MirrorAssetToPackageSample(AssetScenePath, PackageScenePath);
+            MirrorAssetToPackageSample(AssetPerformanceScenePath, PackagePerformanceScenePath);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
         }
@@ -90,7 +101,7 @@ namespace Mizotake.UnityUiSync.Editor
 
         private static void BuildReadme(string readmePath)
         {
-            File.WriteAllText(readmePath, "1. 左右に 2 つのデモ画面が並びます。\n2. 各列は ラベル / コントロール / 状態表示 の 3 列で整理されています。\n3. すべてのデモ要素は 1 画面に収まるように配置してあります。\n4. Toggle はランプと ON/OFF、Slider と Scrollbar は数値、Dropdown と InputField は内容、Button は READY/TRIGGERED が反映されます。\n");
+            File.WriteAllText(readmePath, "1. UnityUiSyncSample は左右に 2 つのデモ画面が並ぶ基本シーンです。\n2. UnityUiSyncPerformanceSample は 1 Canvas あたり 128 個の同期 UI と簡易オーバーレイを持つ測定用シーンです。\n3. 基本シーンの各列は ラベル / コントロール / 状態表示 の 3 列で整理されています。\n4. Toggle はランプと ON/OFF、Slider と Scrollbar は数値、Dropdown と InputField は内容、Button は READY/TRIGGERED が反映されます。\n");
             AssetDatabase.ImportAsset(readmePath);
         }
 
@@ -108,6 +119,17 @@ namespace Mizotake.UnityUiSync.Editor
             }
         }
 
+        private static void BuildPerformanceScene(string scenePath, string peerAProfileAssetPath, string peerBProfileAssetPath)
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            CreateCamera();
+            CreateEventSystem();
+            var peerASync = CreatePerformanceCanvas("PeerAPerformanceCanvas", peerAProfileAssetPath, "PeerA", 0.04f, 0.48f);
+            var peerBSync = CreatePerformanceCanvas("PeerBPerformanceCanvas", peerBProfileAssetPath, "PeerB", 0.52f, 0.96f);
+            CreatePerformanceOverlay(peerBSync.transform, peerASync, peerBSync);
+            EditorSceneManager.SaveScene(scene, scenePath);
+        }
+
         private static void CreateDemoCanvas(string canvasName, string profileAssetPath, string peerName, string hintText, float anchorMinX, float anchorMaxX)
         {
             var canvasObject = CreateCanvas(canvasName);
@@ -115,6 +137,16 @@ namespace Mizotake.UnityUiSync.Editor
             AssignDefaultProfile(sync, profileAssetPath);
             AssignCanvasIdOverride(sync, DemoCanvasId);
             BuildUi(canvasObject.transform, peerName, hintText, anchorMinX, anchorMaxX);
+        }
+
+        private static CanvasUiSync CreatePerformanceCanvas(string canvasName, string profileAssetPath, string peerName, float anchorMinX, float anchorMaxX)
+        {
+            var canvasObject = CreateCanvas(canvasName);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignDefaultProfile(sync, profileAssetPath);
+            AssignCanvasIdOverride(sync, DemoCanvasId);
+            BuildPerformanceUi(canvasObject.transform, peerName, anchorMinX, anchorMaxX);
+            return sync;
         }
 
         private static void MirrorAssetToPackageSample(string sourcePath, string destinationPath)
@@ -216,6 +248,122 @@ namespace Mizotake.UnityUiSync.Editor
             UnityEventTools.AddBoolPersistentListener(presenter.syncButton.onClick, presenter.targetToggle.SetIsOnWithoutNotify, true);
             content.sizeDelta = new Vector2(0f, top + 16f);
             presenter.Refresh();
+        }
+
+        private static void BuildPerformanceUi(Transform canvasTransform, string peerName, float anchorMinX, float anchorMaxX)
+        {
+            var resources = new DefaultControls.Resources();
+            var root = CreatePanel(canvasTransform, anchorMinX, anchorMaxX);
+            var content = CreateContentRoot(root.transform);
+            var top = 0f;
+            PositionContentBlock((RectTransform)CreateText(content, "HeaderText", "Unity UI Sync Performance " + peerName, 28, FontStyle.Bold, Color.white, 40f).transform, ref top, 40f, 8f);
+            PositionContentBlock((RectTransform)CreateText(content, "HintText", "48 Toggle / 24 Slider / 24 Scrollbar / 16 Dropdown / 8 InputField / 8 Button", 14, FontStyle.Normal, new Color(0.82f, 0.86f, 0.92f), 28f).transform, ref top, 28f, 12f);
+            AddPerformanceToggleRows(content, resources, ref top);
+            AddPerformanceSliderRows(content, resources, ref top);
+            AddPerformanceScrollbarRows(content, resources, ref top);
+            AddPerformanceDropdownRows(content, resources, ref top);
+            AddPerformanceInputFieldRows(content, resources, ref top);
+            AddPerformanceButtonRows(content, resources, ref top);
+            content.sizeDelta = new Vector2(0f, top + 24f);
+        }
+
+        private static void AddPerformanceToggleRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceToggleCount; index++)
+            {
+                var toggle = CreateToggleRow(content, resources, "PerfToggle" + index.ToString("D3"), "T" + index.ToString("D3"), index % 2 == 0 ? "ON" : "OFF", out _, out _, out _, out _);
+                toggle.SetIsOnWithoutNotify(index % 2 == 0);
+                PositionContentBlock((RectTransform)toggle.transform.parent, ref top, 68f, 8f);
+            }
+        }
+
+        private static void AddPerformanceSliderRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceSliderCount; index++)
+            {
+                var initialValue = ((index % 8) + 1) / 8f;
+                var slider = CreateSliderRow(content, resources, "PerfSlider" + index.ToString("D3"), "S" + index.ToString("D3"), initialValue.ToString("0.00"), out _, out _);
+                slider.SetValueWithoutNotify(initialValue);
+                PositionContentBlock((RectTransform)slider.transform.parent, ref top, 68f, 8f);
+            }
+        }
+
+        private static void AddPerformanceScrollbarRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceScrollbarCount; index++)
+            {
+                var initialValue = ((index % 6) + 1) / 6f;
+                var scrollbar = CreateScrollbarRow(content, resources, "PerfScrollbar" + index.ToString("D3"), "SB" + index.ToString("D3"), initialValue.ToString("0.00"), out _, out _);
+                scrollbar.SetValueWithoutNotify(initialValue);
+                PositionContentBlock((RectTransform)scrollbar.transform.parent, ref top, 68f, 8f);
+            }
+        }
+
+        private static void AddPerformanceDropdownRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceDropdownCount; index++)
+            {
+                var dropdown = CreateDropdownRow(content, resources, "PerfDropdown" + index.ToString("D3"), "D" + index.ToString("D3"), "Option 0", out _);
+                dropdown.options.Clear();
+                for (var optionIndex = 0; optionIndex < PerformanceDropdownOptionCount; optionIndex++)
+                {
+                    dropdown.options.Add(new Dropdown.OptionData("Option " + optionIndex));
+                }
+
+                dropdown.SetValueWithoutNotify(index % PerformanceDropdownOptionCount);
+                dropdown.RefreshShownValue();
+                PositionContentBlock((RectTransform)dropdown.transform.parent, ref top, 68f, 8f);
+            }
+        }
+
+        private static void AddPerformanceInputFieldRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceInputFieldCount; index++)
+            {
+                var inputField = CreateInputFieldRow(content, resources, "PerfInput" + index.ToString("D3"), "I" + index.ToString("D3"), "Operator " + index.ToString("D2"), out _);
+                inputField.SetTextWithoutNotify("Operator " + index.ToString("D2"));
+                PositionContentBlock((RectTransform)inputField.transform.parent, ref top, 68f, 8f);
+            }
+        }
+
+        private static void AddPerformanceButtonRows(Transform content, DefaultControls.Resources resources, ref float top)
+        {
+            for (var index = 0; index < PerformanceButtonCount; index++)
+            {
+                var button = CreateButtonRow(content, resources, "PerfButton" + index.ToString("D3"), "B" + index.ToString("D3"), "READY", out _, out _);
+                PositionContentBlock((RectTransform)button.transform.parent, ref top, 68f, index == PerformanceButtonCount - 1 ? 0f : 8f);
+            }
+        }
+
+        private static void CreatePerformanceOverlay(Transform parent, CanvasUiSync primary, CanvasUiSync secondary)
+        {
+            var overlayObject = new GameObject("PerformanceOverlay", typeof(RectTransform), typeof(CanvasUiSyncPerformanceOverlay));
+            overlayObject.transform.SetParent(parent, false);
+            var overlayText = CreateOverlayText(overlayObject.transform);
+            overlayObject.GetComponent<CanvasUiSyncPerformanceOverlay>().Configure(primary, secondary, overlayText);
+        }
+
+        private static Text CreateOverlayText(Transform parent)
+        {
+            var backgroundObject = new GameObject("PerformanceStatusBackground", typeof(RectTransform), typeof(Image));
+            backgroundObject.transform.SetParent(parent, false);
+            var backgroundRect = (RectTransform)backgroundObject.transform;
+            backgroundRect.anchorMin = new Vector2(0.04f, 0.95f);
+            backgroundRect.anchorMax = new Vector2(0.96f, 0.995f);
+            backgroundRect.offsetMin = Vector2.zero;
+            backgroundRect.offsetMax = Vector2.zero;
+            var backgroundImage = backgroundObject.GetComponent<Image>();
+            backgroundImage.color = new Color(0.04f, 0.05f, 0.08f, 0.82f);
+            backgroundImage.raycastTarget = false;
+            var text = CreateText(backgroundObject.transform, "PerformanceStatusText", "Perf Scene", 14, FontStyle.Bold, new Color(0.96f, 0.97f, 0.99f), 24f);
+            text.alignment = TextAnchor.MiddleCenter;
+            text.raycastTarget = false;
+            var textRect = (RectTransform)text.transform;
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = new Vector2(10f, 0f);
+            textRect.offsetMax = new Vector2(-10f, 0f);
+            return text;
         }
 
         private static GameObject CreatePanel(Transform parent, float anchorMinX, float anchorMaxX)

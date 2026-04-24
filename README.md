@@ -41,7 +41,8 @@ https://github.com/MizoTake/UnityUISync.git?path=/Packages/com.mizotake.unity-ui
 
 - `Tools/Unity UI Sync/Rebuild Sample Assets` でローカル検証用のサンプルシーンと profile を再生成できます
 - Package Manager からは `Import Samples > Basic Setup` で同等のサンプルを取り込めます
-- サンプルは左右 2 つの Canvas を並べ、片側の操作がもう片側へ反映される構成です
+- `UnityUiSyncSample` は左右 2 つの Canvas を並べ、片側の操作がもう片側へ反映される構成です
+- `UnityUiSyncPerformanceSample` は 1 Canvas あたり 128 個の同期 UI と簡易オーバーレイを持つ測定用シーンです
 
 ## テスト
 

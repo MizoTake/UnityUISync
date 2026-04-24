@@ -13,6 +13,7 @@ namespace Mizotake.UnityUiSync
     public sealed class CanvasUiSync : MonoBehaviour
     {
         internal const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
+        internal const float RuntimeHierarchyRescanMaxIntervalSeconds = 0.5f;
         internal const float PendingRemoteCommitTimeoutSeconds = 30f;
         internal const string HelloAddress = "/uisync/hello";
         internal const string RequestSnapshotAddress = "/uisync/requestSnapshot";
@@ -49,6 +50,7 @@ namespace Mizotake.UnityUiSync
         internal readonly List<string> expiredNodeIds = new List<string>();
         internal readonly List<string> bindingKeyScratch = new List<string>();
         internal readonly Dictionary<Transform, string> pathCacheScratch = new Dictionary<Transform, string>();
+        internal readonly Dictionary<Transform, int> pathHashCacheScratch = new Dictionary<Transform, int>();
         internal readonly List<string> pathSegmentScratch = new List<string>();
         internal readonly List<Toggle> toggleScratch = new List<Toggle>();
         internal readonly List<Toggle> dropdownItemToggleScratch = new List<Toggle>();
@@ -61,6 +63,8 @@ namespace Mizotake.UnityUiSync
         internal readonly List<Button> buttonScratch = new List<Button>();
         internal readonly List<Transform> dropdownTemplateRootScratch = new List<Transform>();
         internal readonly List<Transform> dropdownRuntimeRootScratch = new List<Transform>();
+        internal readonly Dictionary<Dropdown, GameObject> dropdownRuntimeRootCache = new Dictionary<Dropdown, GameObject>();
+        internal readonly Dictionary<TMP_Dropdown, GameObject> tmpDropdownRuntimeRootCache = new Dictionary<TMP_Dropdown, GameObject>();
         internal readonly StringBuilder stringBuilderScratch = new StringBuilder(256);
         internal string registryHash = string.Empty;
         internal string canvasId = string.Empty;
@@ -70,6 +74,7 @@ namespace Mizotake.UnityUiSync
         internal float nextPeriodicResyncTime;
         internal float nextStatisticsLogTime;
         internal float nextHierarchyRescanTime;
+        internal float currentHierarchyRescanIntervalSeconds = RuntimeHierarchyRescanIntervalSeconds;
         internal float nextPendingCommitTime = float.PositiveInfinity;
         internal float snapshotCooldownUntil;
         internal int snapshotRetryCount;
@@ -257,7 +262,7 @@ namespace Mizotake.UnityUiSync
             nextSnapshotRequestTime = Time.unscaledTime;
             nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
             nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
-            nextHierarchyRescanTime = Time.unscaledTime + RuntimeHierarchyRescanIntervalSeconds;
+            ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             lastGcCollectionCount0 = GC.CollectionCount(0);
             lastGcCollectionCount1 = GC.CollectionCount(1);
             lastGcCollectionCount2 = GC.CollectionCount(2);
@@ -271,6 +276,7 @@ namespace Mizotake.UnityUiSync
                 ScanBindings();
                 InitializeLocalState();
                 bindingHierarchySignature = ComputeBindingHierarchySignature();
+                ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             }
         }
 
@@ -300,6 +306,7 @@ namespace Mizotake.UnityUiSync
             nextSnapshotRequestTime = Time.unscaledTime;
             nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
             nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             SendHello();
             RequestSnapshotIfNeeded(true);
         }
@@ -607,9 +614,9 @@ namespace Mizotake.UnityUiSync
             return CanvasUiSyncBindingsService.TryRefreshBindingsForSyncId(this, syncId);
         }
 
-        internal void RefreshBindingsIfHierarchyChanged(bool force)
+        internal bool RefreshBindingsIfHierarchyChanged(bool force)
         {
-            CanvasUiSyncBindingsService.RefreshBindingsIfHierarchyChanged(this, force);
+            return CanvasUiSyncBindingsService.RefreshBindingsIfHierarchyChanged(this, force);
         }
 
         internal int ComputeBindingHierarchySignature()
@@ -617,9 +624,25 @@ namespace Mizotake.UnityUiSync
             return CanvasUiSyncBindingsService.ComputeBindingHierarchySignature(this);
         }
 
+        internal void ResetRuntimeHierarchyRescanSchedule(float now)
+        {
+            currentHierarchyRescanIntervalSeconds = RuntimeHierarchyRescanIntervalSeconds;
+            nextHierarchyRescanTime = now + currentHierarchyRescanIntervalSeconds;
+        }
+
         internal int ComputeStableHash(string value)
         {
             return CanvasUiSyncBindingsService.ComputeStableHash(value);
+        }
+
+        internal void HandleDropdownRuntimeRootChanged(Dropdown dropdown, GameObject runtimeRoot)
+        {
+            CanvasUiSyncBindingsService.HandleDropdownRuntimeRootChanged(this, dropdown, runtimeRoot);
+        }
+
+        internal void HandleDropdownRuntimeRootChanged(TMP_Dropdown dropdown, GameObject runtimeRoot)
+        {
+            CanvasUiSyncBindingsService.HandleDropdownRuntimeRootChanged(this, dropdown, runtimeRoot);
         }
 
         internal void AppendBindingHierarchySignature<TComponent>(ref int hash, IEnumerable<TComponent> components, string componentType) where TComponent : Component

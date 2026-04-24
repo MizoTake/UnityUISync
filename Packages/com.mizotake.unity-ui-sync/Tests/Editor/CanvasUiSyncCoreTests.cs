@@ -17,6 +17,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
     public sealed class CanvasUiSyncCoreTests
     {
         private const string SampleScenePath = "Assets/Scenes/UnityUiSyncSample.unity";
+        private const string PerformanceScenePath = "Assets/Scenes/UnityUiSyncPerformanceSample.unity";
         private const string AssetProfileDirectoryPath = "Assets/UnityUISyncSamples/Profiles";
         private const string PackageSampleRootPath = "Packages/com.mizotake.unity-ui-sync/Samples~/Basic Setup";
 
@@ -408,7 +409,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var polledBindingSyncIds = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Select(GetBindingSyncId).ToArray();
 
             Assert.That(polledBindingSyncIds, Does.Contain("OperationCanvas/ModeDropdown:Dropdown"));
-            Assert.That(polledBindingSyncIds, Does.Contain("OperationCanvas/ModeDropdown:DropdownExpanded"));
+            Assert.That(polledBindingSyncIds, Does.Not.Contain("OperationCanvas/ModeDropdown:DropdownExpanded"));
             Assert.That(polledBindingSyncIds.Any(syncId => syncId.Contains("DropdownItemToggle", System.StringComparison.Ordinal)), Is.False);
         }
 
@@ -479,7 +480,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             stopwatch.Stop();
             TestContext.WriteLine("LargeDropdown polling benchmark: polledBindings=" + polledBindings.Count + " elapsedMs=" + stopwatch.Elapsed.TotalMilliseconds.ToString("F3"));
 
-            Assert.That(polledBindings.Count, Is.EqualTo(2));
+            Assert.That(polledBindings.Count, Is.EqualTo(1));
         }
 
         [Test]
@@ -525,6 +526,69 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void ComputeBindingHierarchySignature_ReparentedExplicitBindingId_DoesNotChange()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var parentA = new GameObject("ParentA").transform;
+            parentA.SetParent(canvasObject.transform, false);
+            var parentB = new GameObject("ParentB").transform;
+            parentB.SetParent(canvasObject.transform, false);
+            var toggleObject = new GameObject("ModeToggle", typeof(RectTransform), typeof(Toggle), typeof(CanvasUiSyncBindingId));
+            toggleObject.transform.SetParent(parentA, false);
+            toggleObject.GetComponent<CanvasUiSyncBindingId>().BindingId = "ExplicitModeToggle";
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+
+            var initialSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            toggleObject.transform.SetParent(parentB, false);
+            var movedSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+
+            Assert.That(movedSignature, Is.EqualTo(initialSignature));
+        }
+
+        [Test]
+        public void ComputeBindingHierarchySignature_RenamedBoundObject_Changes()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("ModeToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+
+            var initialSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            toggleObject.name = "ModeToggleRenamed";
+            var renamedSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+
+            Assert.That(renamedSignature, Is.Not.EqualTo(initialSignature));
+        }
+
+        [Test]
+        public void TickRuntimeHierarchyRescan_StableHierarchy_BacksOffAndResetsAfterBindingChange()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("Toggle0", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+
+            InvokePrivate(sync, "TickRuntimeHierarchyRescan", 0.2f);
+            Assert.That((float)GetPrivateField(sync, "currentHierarchyRescanIntervalSeconds"), Is.EqualTo(0.2f).Within(0.0001f));
+            InvokePrivate(sync, "TickRuntimeHierarchyRescan", 0.4f);
+            Assert.That((float)GetPrivateField(sync, "currentHierarchyRescanIntervalSeconds"), Is.EqualTo(0.4f).Within(0.0001f));
+            InvokePrivate(sync, "TickRuntimeHierarchyRescan", 0.8f);
+            Assert.That((float)GetPrivateField(sync, "currentHierarchyRescanIntervalSeconds"), Is.EqualTo(0.5f).Within(0.0001f));
+
+            new GameObject("Toggle1", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            InvokePrivate(sync, "TickRuntimeHierarchyRescan", 1.3f);
+
+            Assert.That((float)GetPrivateField(sync, "currentHierarchyRescanIntervalSeconds"), Is.EqualTo(0.1f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Count, Is.EqualTo(2));
+        }
+
+        [Test]
         public void ScanBindings_ClassifiesContinuousAndPolledBindingsWithoutDuplication()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -547,12 +611,49 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var polledBindings = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().ToArray();
 
             Assert.That(continuousBindings.Length, Is.EqualTo(1));
-            Assert.That(polledBindings.Length, Is.EqualTo(2));
+            Assert.That(polledBindings.Length, Is.EqualTo(1));
 
             InvokePrivate(sync, "ScanBindings");
 
             Assert.That(((IEnumerable)GetPrivateField(sync, "continuousBindings")).Cast<object>().Count(), Is.EqualTo(1));
-            Assert.That(((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Count(), Is.EqualTo(2));
+            Assert.That(((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DropdownExpanded_RuntimeRootNotificationBroadcastsWithoutPolling()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "Start");
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+
+            var runtimeRoot = new GameObject("Dropdown List");
+            InvokePrivate(sync, "HandleDropdownRuntimeRootChanged", dropdown, runtimeRoot);
+
+            var localStates = (IDictionary)GetPrivateField(sync, "localStates");
+            var expandedState = localStates["OperationCanvas/ModeDropdown:DropdownExpanded"];
+            Assert.That(expandedState.GetType().GetProperty("Value").GetValue(expandedState), Is.EqualTo(true));
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+
+            InvokePrivate(sync, "HandleDropdownRuntimeRootChanged", dropdown, null);
+            expandedState = localStates["OperationCanvas/ModeDropdown:DropdownExpanded"];
+            Assert.That(expandedState.GetType().GetProperty("Value").GetValue(expandedState), Is.EqualTo(false));
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(2));
+
+            Object.DestroyImmediate(runtimeRoot);
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(2));
         }
 
         [Test]
@@ -809,9 +910,11 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         {
             Mizotake.UnityUiSync.Editor.CanvasUiSyncSampleBuilder.RebuildSampleAssets();
             Assert.That(File.Exists(SampleScenePath), Is.True);
+            Assert.That(File.Exists(PerformanceScenePath), Is.True);
             Assert.That(File.Exists(AssetProfileDirectoryPath + "/PeerA.asset"), Is.True);
             Assert.That(File.Exists(AssetProfileDirectoryPath + "/PeerB.asset"), Is.True);
             Assert.That(File.Exists(PackageSampleRootPath + "/Scenes/UnityUiSyncSample.unity"), Is.True);
+            Assert.That(File.Exists(PackageSampleRootPath + "/Scenes/UnityUiSyncPerformanceSample.unity"), Is.True);
             Assert.That(File.Exists(PackageSampleRootPath + "/Profiles/PeerA.asset"), Is.True);
             Assert.That(File.Exists(PackageSampleRootPath + "/Profiles/PeerB.asset"), Is.True);
         }
@@ -875,6 +978,30 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
             AssertButtonTargetsLocalToggle("PeerACanvas");
             AssertButtonTargetsLocalToggle("PeerBCanvas");
+        }
+
+        [Test]
+        public void GeneratedPerformanceScene_HasMeasurementOverlayAndLargeBindingSet()
+        {
+            Mizotake.UnityUiSync.Editor.CanvasUiSyncSampleBuilder.RebuildSampleAssets();
+            var scene = EditorSceneManager.OpenScene(PerformanceScenePath, OpenSceneMode.Single);
+            Assert.That(scene.IsValid(), Is.True);
+            var syncs = UnityEngine.Object.FindObjectsOfType<CanvasUiSync>(true);
+            Assert.That(syncs, Has.Length.EqualTo(2));
+            foreach (var sync in syncs)
+            {
+                InvokePrivate(sync, "Awake");
+                InvokePrivate(sync, "Start");
+            }
+
+            Assert.That(Resources.FindObjectsOfTypeAll<CanvasUiSyncPerformanceOverlay>().Length, Is.EqualTo(1));
+            Assert.That(Resources.FindObjectsOfTypeAll<Text>().Any(text => text.name == "PerformanceStatusText"), Is.True);
+            foreach (var sync in syncs)
+            {
+                Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Count, Is.EqualTo(240));
+                Assert.That(((ICollection)GetPrivateField(sync, "continuousBindings")).Count, Is.EqualTo(48));
+                Assert.That(((ICollection)GetPrivateField(sync, "polledBindings")).Count, Is.EqualTo(16));
+            }
         }
 
         [Test]
