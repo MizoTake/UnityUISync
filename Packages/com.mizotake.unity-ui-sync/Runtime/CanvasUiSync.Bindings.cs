@@ -12,9 +12,18 @@ namespace Mizotake.UnityUiSync
     {
         private const string DropdownListObjectName = "Dropdown List";
         private const string DropdownBlockerObjectName = "Blocker";
-        internal readonly struct BindingScanContext
+        internal sealed class BindingScanContext
         {
-            public BindingScanContext(CanvasUiSync owner)
+            private CanvasUiSync owner;
+            private Dictionary<Transform, string> pathCache;
+            private Dictionary<Transform, int> pathHashCache;
+            private List<Transform> dropdownTemplateRoots;
+            private List<Transform> dropdownRuntimeRoots;
+
+            public List<Dropdown> Dropdowns { get; private set; }
+            public List<TMP_Dropdown> TmpDropdowns { get; private set; }
+
+            public void Prepare(CanvasUiSync owner)
             {
                 this.owner = owner;
                 Dropdowns = owner.dropdownScratch;
@@ -34,14 +43,6 @@ namespace Mizotake.UnityUiSync
                 CacheDropdownRoots(owner, Dropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
                 CacheDropdownRoots(owner, TmpDropdowns, dropdownTemplateRoots, dropdownRuntimeRoots);
             }
-
-            private readonly CanvasUiSync owner;
-            private readonly Dictionary<Transform, string> pathCache;
-            private readonly Dictionary<Transform, int> pathHashCache;
-            private readonly List<Transform> dropdownTemplateRoots;
-            private readonly List<Transform> dropdownRuntimeRoots;
-            public List<Dropdown> Dropdowns { get; }
-            public List<TMP_Dropdown> TmpDropdowns { get; }
 
             public string BuildSyncId(Transform target, string componentType)
             {
@@ -68,10 +69,11 @@ namespace Mizotake.UnityUiSync
                 return IsUnderRoots(target, dropdownRuntimeRoots);
             }
 
-            private static void CacheDropdownRoots(CanvasUiSync owner, IEnumerable<Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            private static void CacheDropdownRoots(CanvasUiSync owner, List<Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
             {
-                foreach (var dropdown in dropdowns)
+                for (var index = 0; index < dropdowns.Count; index++)
                 {
+                    var dropdown = dropdowns[index];
                     if (dropdown == null)
                     {
                         continue;
@@ -90,10 +92,11 @@ namespace Mizotake.UnityUiSync
                 }
             }
 
-            private static void CacheDropdownRoots(CanvasUiSync owner, IEnumerable<TMP_Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
+            private static void CacheDropdownRoots(CanvasUiSync owner, List<TMP_Dropdown> dropdowns, List<Transform> templateRoots, List<Transform> runtimeRoots)
             {
-                foreach (var dropdown in dropdowns)
+                for (var index = 0; index < dropdowns.Count; index++)
                 {
+                    var dropdown = dropdowns[index];
                     if (dropdown == null)
                     {
                         continue;
@@ -144,7 +147,7 @@ namespace Mizotake.UnityUiSync
             owner.polledBindings.Clear();
             owner.dropdownRuntimeRootCache.Clear();
             owner.tmpDropdownRuntimeRootCache.Clear();
-            var context = new BindingScanContext(owner);
+            var context = PrepareBindingScanContext(owner);
             RegisterToggles(owner, context);
             RegisterSliders(owner, context);
             RegisterScrollbars(owner, context);
@@ -156,9 +159,15 @@ namespace Mizotake.UnityUiSync
             owner.registryHash = ComputeRegistryHash(owner);
         }
 
+        private static BindingScanContext PrepareBindingScanContext(CanvasUiSync owner)
+        {
+            owner.bindingScanContext.Prepare(owner);
+            return owner.bindingScanContext;
+        }
+
         internal static void RegisterToggles(CanvasUiSync owner)
         {
-            RegisterToggles(owner, new BindingScanContext(owner));
+            RegisterToggles(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterToggles(CanvasUiSync owner, BindingScanContext context)
@@ -182,7 +191,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterSliders(CanvasUiSync owner)
         {
-            RegisterSliders(owner, new BindingScanContext(owner));
+            RegisterSliders(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterSliders(CanvasUiSync owner, BindingScanContext context)
@@ -206,7 +215,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterScrollbars(CanvasUiSync owner)
         {
-            RegisterScrollbars(owner, new BindingScanContext(owner));
+            RegisterScrollbars(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterScrollbars(CanvasUiSync owner, BindingScanContext context)
@@ -230,7 +239,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterDropdowns(CanvasUiSync owner)
         {
-            RegisterDropdowns(owner, new BindingScanContext(owner));
+            RegisterDropdowns(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterDropdowns(CanvasUiSync owner, BindingScanContext context)
@@ -243,7 +252,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Dropdown"), "Dropdown", () => component.value, value => SetDropdownValue(owner, component, Convert.ToInt32(value)), false, true);
+                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Dropdown"), "Dropdown", null, value => SetDropdownValue(owner, component, Convert.ToInt32(value)), false, true).WithIntReader(() => component.value);
                 UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
@@ -255,7 +264,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterTmpDropdowns(CanvasUiSync owner)
         {
-            RegisterTmpDropdowns(owner, new BindingScanContext(owner));
+            RegisterTmpDropdowns(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterTmpDropdowns(CanvasUiSync owner, BindingScanContext context)
@@ -268,7 +277,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", () => component.value, value => SetDropdownValue(owner, component, Convert.ToInt32(value)), false, true);
+                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "TMP_Dropdown"), "TMP_Dropdown", null, value => SetDropdownValue(owner, component, Convert.ToInt32(value)), false, true).WithIntReader(() => component.value);
                 UnityEngine.Events.UnityAction<int> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
@@ -280,7 +289,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterInputFields(CanvasUiSync owner)
         {
-            RegisterInputFields(owner, new BindingScanContext(owner));
+            RegisterInputFields(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterInputFields(CanvasUiSync owner, BindingScanContext context)
@@ -312,7 +321,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterTmpInputFields(CanvasUiSync owner)
         {
-            RegisterTmpInputFields(owner, new BindingScanContext(owner));
+            RegisterTmpInputFields(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterTmpInputFields(CanvasUiSync owner, BindingScanContext context)
@@ -344,7 +353,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RegisterButtons(CanvasUiSync owner)
         {
-            RegisterButtons(owner, new BindingScanContext(owner));
+            RegisterButtons(owner, PrepareBindingScanContext(owner));
         }
 
         private static void RegisterButtons(CanvasUiSync owner, BindingScanContext context)
@@ -370,9 +379,14 @@ namespace Mizotake.UnityUiSync
         {
             if (owner.bindings.ContainsKey(binding.SyncId))
             {
-                if (owner.profile.logDuplicateSyncId)
+                if (owner.ShouldDebugLog() && owner.profile.logDuplicateSyncId)
                 {
-                    Debug.LogError("Duplicate syncId detected: " + binding.SyncId, binding.Component);
+                    var builder = owner.stringBuilderScratch;
+                    builder.Length = 0;
+                    builder.Append("Duplicate syncId detected: ");
+                    builder.Append(binding.SyncId);
+                    Debug.LogError(builder.ToString(), binding.Component);
+                    builder.Length = 0;
                 }
 
                 binding.Dispose();
@@ -661,7 +675,7 @@ namespace Mizotake.UnityUiSync
         {
             unchecked
             {
-                var context = new BindingScanContext(owner);
+                var context = PrepareBindingScanContext(owner);
                 var hash = 17;
                 CollectComponentsInChildren(owner, owner.toggleScratch);
                 CollectComponentsInChildren(owner, owner.sliderScratch);
@@ -683,7 +697,7 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        internal static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, IEnumerable<TComponent> components, string componentType, BindingScanContext? context = null) where TComponent : Component
+        internal static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, IEnumerable<TComponent> components, string componentType, BindingScanContext context = null) where TComponent : Component
         {
             foreach (var component in components)
             {
@@ -692,7 +706,21 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                hash = (hash * 31) + (context.HasValue ? context.Value.BuildSyncIdFingerprint(component.transform, componentType) : BuildSyncIdFingerprint(owner, component.transform, componentType, null));
+                hash = (hash * 31) + (context != null ? context.BuildSyncIdFingerprint(component.transform, componentType) : BuildSyncIdFingerprint(owner, component.transform, componentType, null));
+            }
+        }
+
+        private static void AppendBindingHierarchySignature<TComponent>(CanvasUiSync owner, ref int hash, List<TComponent> components, string componentType, BindingScanContext context) where TComponent : Component
+        {
+            for (var index = 0; index < components.Count; index++)
+            {
+                var component = components[index];
+                if (ShouldSkipComponent(owner, component, context))
+                {
+                    continue;
+                }
+
+                hash = (hash * 31) + context.BuildSyncIdFingerprint(component.transform, componentType);
             }
         }
 
@@ -716,8 +744,9 @@ namespace Mizotake.UnityUiSync
 
         private static void AppendDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash, BindingScanContext context)
         {
-            foreach (var dropdown in context.Dropdowns)
+            for (var index = 0; index < context.Dropdowns.Count; index++)
             {
+                var dropdown = context.Dropdowns[index];
                 if (ShouldSkipComponent(owner, dropdown, context))
                 {
                     continue;
@@ -732,8 +761,9 @@ namespace Mizotake.UnityUiSync
 
         private static void AppendTmpDropdownItemToggleBindingSignatures(CanvasUiSync owner, ref int hash, BindingScanContext context)
         {
-            foreach (var dropdown in context.TmpDropdowns)
+            for (var index = 0; index < context.TmpDropdowns.Count; index++)
             {
+                var dropdown = context.TmpDropdowns[index];
                 if (ShouldSkipComponent(owner, dropdown, context))
                 {
                     continue;
@@ -746,16 +776,16 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext? context = null)
+        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext context = null)
         {
             return component == null || owner.IsComponentExcluded(component) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
         }
 
-        private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext? context = null)
+        private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
         {
-            if (context.HasValue)
+            if (context != null)
             {
-                return context.Value.IsTemplateComponent(target);
+                return context.IsTemplateComponent(target);
             }
 
             CollectComponentsInChildren(owner, owner.dropdownScratch);
@@ -781,11 +811,11 @@ namespace Mizotake.UnityUiSync
             return false;
         }
 
-        private static bool IsDropdownRuntimeComponent(CanvasUiSync owner, Transform target, BindingScanContext? context = null)
+        private static bool IsDropdownRuntimeComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
         {
-            if (context.HasValue)
+            if (context != null)
             {
-                return context.Value.IsRuntimeComponent(target);
+                return context.IsRuntimeComponent(target);
             }
 
             CollectComponentsInChildren(owner, owner.dropdownScratch);
@@ -1070,10 +1100,11 @@ namespace Mizotake.UnityUiSync
             owner.GetComponentsInChildren(true, results);
         }
 
-        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, IEnumerable<Dropdown> dropdowns)
+        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, List<Dropdown> dropdowns)
         {
-            foreach (var dropdown in dropdowns)
+            for (var index = 0; index < dropdowns.Count; index++)
             {
+                var dropdown = dropdowns[index];
                 if (dropdown?.template == null)
                 {
                     continue;
@@ -1083,10 +1114,11 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, IEnumerable<TMP_Dropdown> dropdowns)
+        private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, List<TMP_Dropdown> dropdowns)
         {
-            foreach (var dropdown in dropdowns)
+            for (var index = 0; index < dropdowns.Count; index++)
             {
+                var dropdown = dropdowns[index];
                 if (dropdown?.template == null)
                 {
                     continue;

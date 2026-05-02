@@ -67,6 +67,7 @@ namespace Mizotake.UnityUiSync.Editor
                 profile.allowedPeers.Add("PeerB");
                 profile.peerEndpoints.Clear();
                 profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+                profile.enableDebugLog = false;
                 profile.verboseLog = true;
             });
 
@@ -82,6 +83,7 @@ namespace Mizotake.UnityUiSync.Editor
                 profile.allowedPeers.Add("PeerA");
                 profile.peerEndpoints.Clear();
                 profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerA", ipAddress = "127.0.0.1", port = 9000, enabled = true });
+                profile.enableDebugLog = false;
                 profile.verboseLog = true;
             });
         }

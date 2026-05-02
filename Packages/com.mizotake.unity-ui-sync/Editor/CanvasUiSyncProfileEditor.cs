@@ -25,6 +25,7 @@ namespace Mizotake.UnityUiSync.Editor
         private SerializedProperty minimumProposeIntervalSecondsProperty;
         private SerializedProperty minimumCommitBroadcastIntervalSecondsProperty;
         private SerializedProperty stringSendModeProperty;
+        private SerializedProperty enableDebugLogProperty;
         private SerializedProperty verboseLogProperty;
         private SerializedProperty logUnknownSyncIdProperty;
         private SerializedProperty logTypeMismatchProperty;
@@ -54,6 +55,7 @@ namespace Mizotake.UnityUiSync.Editor
             minimumProposeIntervalSecondsProperty = serializedObject.FindProperty("minimumProposeIntervalSeconds");
             minimumCommitBroadcastIntervalSecondsProperty = serializedObject.FindProperty("minimumCommitBroadcastIntervalSeconds");
             stringSendModeProperty = serializedObject.FindProperty("stringSendMode");
+            enableDebugLogProperty = serializedObject.FindProperty("enableDebugLog");
             verboseLogProperty = serializedObject.FindProperty("verboseLog");
             logUnknownSyncIdProperty = serializedObject.FindProperty("logUnknownSyncId");
             logTypeMismatchProperty = serializedObject.FindProperty("logTypeMismatch");
@@ -101,15 +103,19 @@ namespace Mizotake.UnityUiSync.Editor
             EditorGUILayout.PropertyField(stringSendModeProperty, new GUIContent("文字列の送信タイミング"));
 
             DrawSectionHeader("ログと監視", "調査用ログと長時間運用の簡易統計です。");
-            EditorGUILayout.PropertyField(verboseLogProperty, new GUIContent("詳細ログ"));
-            EditorGUILayout.PropertyField(logUnknownSyncIdProperty, new GUIContent("未知の SyncId を記録"));
-            EditorGUILayout.PropertyField(logTypeMismatchProperty, new GUIContent("型不一致を記録"));
-            EditorGUILayout.PropertyField(logDuplicateSyncIdProperty, new GUIContent("重複 SyncId を記録"));
-            EditorGUILayout.PropertyField(logRegistryHashMismatchProperty, new GUIContent("RegistryHash 不一致を記録"));
-            EditorGUILayout.PropertyField(enableStatisticsLogProperty, new GUIContent("統計ログを有効化", "送受信数、概算バイト数、GC 回数を一定間隔で記録します。"));
-            if (enableStatisticsLogProperty.boolValue)
+            EditorGUILayout.PropertyField(enableDebugLogProperty, new GUIContent("Debug.Log を表示", "有効な場合のみ CanvasUiSync の Debug.Log/Warning/Error を出力します。"));
+            using (new EditorGUI.DisabledScope(!enableDebugLogProperty.boolValue))
             {
-                EditorGUILayout.PropertyField(statisticsLogIntervalSecondsProperty, new GUIContent("統計ログ間隔 (秒)"));
+                EditorGUILayout.PropertyField(verboseLogProperty, new GUIContent("詳細ログ"));
+                EditorGUILayout.PropertyField(logUnknownSyncIdProperty, new GUIContent("未知の SyncId を記録"));
+                EditorGUILayout.PropertyField(logTypeMismatchProperty, new GUIContent("型不一致を記録"));
+                EditorGUILayout.PropertyField(logDuplicateSyncIdProperty, new GUIContent("重複 SyncId を記録"));
+                EditorGUILayout.PropertyField(logRegistryHashMismatchProperty, new GUIContent("RegistryHash 不一致を記録"));
+                EditorGUILayout.PropertyField(enableStatisticsLogProperty, new GUIContent("統計ログを有効化", "送受信数、概算バイト数、GC 回数を一定間隔で記録します。"));
+                if (enableDebugLogProperty.boolValue && enableStatisticsLogProperty.boolValue)
+                {
+                    EditorGUILayout.PropertyField(statisticsLogIntervalSecondsProperty, new GUIContent("統計ログ間隔 (秒)"));
+                }
             }
 
             serializedObject.ApplyModifiedProperties();

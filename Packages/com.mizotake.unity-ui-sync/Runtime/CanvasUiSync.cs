@@ -65,6 +65,7 @@ namespace Mizotake.UnityUiSync
         internal readonly List<Transform> dropdownRuntimeRootScratch = new List<Transform>();
         internal readonly Dictionary<Dropdown, GameObject> dropdownRuntimeRootCache = new Dictionary<Dropdown, GameObject>();
         internal readonly Dictionary<TMP_Dropdown, GameObject> tmpDropdownRuntimeRootCache = new Dictionary<TMP_Dropdown, GameObject>();
+        internal readonly CanvasUiSyncBindingsService.BindingScanContext bindingScanContext = new CanvasUiSyncBindingsService.BindingScanContext();
         internal readonly StringBuilder stringBuilderScratch = new StringBuilder(256);
         internal string registryHash = string.Empty;
         internal string canvasId = string.Empty;
@@ -164,6 +165,7 @@ namespace Mizotake.UnityUiSync
 
             private readonly Func<object> readValue;
             private readonly Action<object> applyValue;
+            private Func<int> readIntValue;
             public Component Component { get; }
             public string SyncId { get; }
             public string ValueType { get; }
@@ -174,7 +176,30 @@ namespace Mizotake.UnityUiSync
 
             public object ReadValue()
             {
-                return readValue == null ? null : readValue();
+                if (readValue != null)
+                {
+                    return readValue();
+                }
+
+                return readIntValue == null ? null : readIntValue();
+            }
+
+            public UiSyncBinding WithIntReader(Func<int> readValue)
+            {
+                readIntValue = readValue;
+                return this;
+            }
+
+            public bool TryReadIntValue(out int value)
+            {
+                if (readIntValue == null)
+                {
+                    value = 0;
+                    return false;
+                }
+
+                value = readIntValue();
+                return true;
             }
 
             public void ApplyValue(object value)
@@ -261,7 +286,7 @@ namespace Mizotake.UnityUiSync
             nextHelloTime = Time.unscaledTime;
             nextSnapshotRequestTime = Time.unscaledTime;
             nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
-            nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            nextStatisticsLogTime = ShouldStatisticsLog() ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
             ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             lastGcCollectionCount0 = GC.CollectionCount(0);
             lastGcCollectionCount1 = GC.CollectionCount(1);
@@ -305,7 +330,7 @@ namespace Mizotake.UnityUiSync
             nextHelloTime = Time.unscaledTime;
             nextSnapshotRequestTime = Time.unscaledTime;
             nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
-            nextStatisticsLogTime = profile.enableStatisticsLog ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            nextStatisticsLogTime = ShouldStatisticsLog() ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
             ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             SendHello();
             RequestSnapshotIfNeeded(true);
@@ -527,6 +552,21 @@ namespace Mizotake.UnityUiSync
             }
 
             return false;
+        }
+
+        internal bool ShouldDebugLog()
+        {
+            return profile != null && profile.enableDebugLog;
+        }
+
+        internal bool ShouldVerboseLog()
+        {
+            return ShouldDebugLog() && profile.verboseLog;
+        }
+
+        internal bool ShouldStatisticsLog()
+        {
+            return ShouldDebugLog() && profile.enableStatisticsLog;
         }
 
         internal void ScanBindings()

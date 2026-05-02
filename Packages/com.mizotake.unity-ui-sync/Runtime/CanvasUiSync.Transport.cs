@@ -134,9 +134,16 @@ namespace Mizotake.UnityUiSync
             foreach (var snapshotId in owner.expiredSnapshotIds)
             {
                 owner.activeSnapshotIds.Remove(snapshotId);
-                if (owner.profile.verboseLog)
+                if (owner.ShouldVerboseLog())
                 {
-                    Debug.LogWarning("CanvasUiSync snapshot timeout cleanup: " + snapshotId + " canvas=" + owner.canvasId, owner);
+                    var builder = owner.stringBuilderScratch;
+                    builder.Length = 0;
+                    builder.Append("CanvasUiSync snapshot timeout cleanup: ");
+                    builder.Append(snapshotId);
+                    builder.Append(" canvas=");
+                    builder.Append(owner.canvasId);
+                    Debug.LogWarning(builder.ToString(), owner);
+                    builder.Length = 0;
                 }
             }
 
@@ -163,7 +170,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void TickStatisticsLog(CanvasUiSync owner, float now)
         {
-            if (!owner.profile.enableStatisticsLog || now < owner.nextStatisticsLogTime)
+            if (!owner.ShouldStatisticsLog() || now < owner.nextStatisticsLogTime)
             {
                 return;
             }
@@ -171,7 +178,30 @@ namespace Mizotake.UnityUiSync
             var gc0 = GC.CollectionCount(0);
             var gc1 = GC.CollectionCount(1);
             var gc2 = GC.CollectionCount(2);
-            Debug.Log("CanvasUiSync stats: canvas=" + owner.canvasId + " sentMessages=" + owner.sentMessageCount + " receivedMessages=" + owner.receivedMessageCount + " sentValues=" + owner.sentValueCount + " receivedValues=" + owner.receivedValueCount + " sentBytes~=" + owner.sentApproxBytes + " receivedBytes~=" + owner.receivedApproxBytes + " gc0Delta=" + (gc0 - owner.lastGcCollectionCount0) + " gc1Delta=" + (gc1 - owner.lastGcCollectionCount1) + " gc2Delta=" + (gc2 - owner.lastGcCollectionCount2), owner);
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync stats: canvas=");
+            builder.Append(owner.canvasId);
+            builder.Append(" sentMessages=");
+            builder.Append(owner.sentMessageCount);
+            builder.Append(" receivedMessages=");
+            builder.Append(owner.receivedMessageCount);
+            builder.Append(" sentValues=");
+            builder.Append(owner.sentValueCount);
+            builder.Append(" receivedValues=");
+            builder.Append(owner.receivedValueCount);
+            builder.Append(" sentBytes~=");
+            builder.Append(owner.sentApproxBytes);
+            builder.Append(" receivedBytes~=");
+            builder.Append(owner.receivedApproxBytes);
+            builder.Append(" gc0Delta=");
+            builder.Append(gc0 - owner.lastGcCollectionCount0);
+            builder.Append(" gc1Delta=");
+            builder.Append(gc1 - owner.lastGcCollectionCount1);
+            builder.Append(" gc2Delta=");
+            builder.Append(gc2 - owner.lastGcCollectionCount2);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
             owner.sentMessageCount = 0;
             owner.receivedMessageCount = 0;
             owner.sentValueCount = 0;
@@ -254,7 +284,17 @@ namespace Mizotake.UnityUiSync
             foreach (var nodeId in owner.expiredNodeIds)
             {
                 owner.nodes.Remove(nodeId);
-                Debug.LogWarning("CanvasUiSync peer leave: " + nodeId + " canvas=" + owner.canvasId, owner);
+                if (owner.ShouldDebugLog())
+                {
+                    var builder = owner.stringBuilderScratch;
+                    builder.Length = 0;
+                    builder.Append("CanvasUiSync peer leave: ");
+                    builder.Append(nodeId);
+                    builder.Append(" canvas=");
+                    builder.Append(owner.canvasId);
+                    Debug.LogWarning(builder.ToString(), owner);
+                    builder.Length = 0;
+                }
             }
 
             owner.expiredNodeIds.Clear();
@@ -285,7 +325,17 @@ namespace Mizotake.UnityUiSync
             }
 
             sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
-            Debug.Log("CanvasUiSync snapshot served: " + owner.canvasId + " snapshotId=" + snapshotId, owner);
+            if (owner.ShouldDebugLog())
+            {
+                var builder = owner.stringBuilderScratch;
+                builder.Length = 0;
+                builder.Append("CanvasUiSync snapshot served: ");
+                builder.Append(owner.canvasId);
+                builder.Append(" snapshotId=");
+                builder.Append(snapshotId);
+                Debug.Log(builder.ToString(), owner);
+                builder.Length = 0;
+            }
         }
 
         internal static IEnumerable<object[]> EnumerateSnapshotStateValues(CanvasUiSync owner, string snapshotId)
@@ -374,7 +424,7 @@ namespace Mizotake.UnityUiSync
                 owner.client.port = port;
                 owner.client.Send(address, values);
                 owner.sentMessageCount++;
-                if (owner.profile.enableStatisticsLog)
+                if (owner.ShouldStatisticsLog())
                 {
                     owner.sentValueCount += values.Length;
                     owner.sentApproxBytes += EstimatePayloadBytes(address, values);

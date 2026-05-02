@@ -26,14 +26,17 @@ namespace Mizotake.UnityUiSync
             }
             catch (Exception exception)
             {
-                Debug.LogWarning("CanvasUiSync ignored malformed payload: address=" + address + " reason=" + exception.Message, owner);
+                if (owner.ShouldDebugLog())
+                {
+                    LogMalformedPayload(owner, address, exception.Message);
+                }
             }
         }
 
         internal static void RecordReceivedPayload(CanvasUiSync owner, string address, object[] values)
         {
             owner.receivedMessageCount++;
-            if (!owner.profile.enableStatisticsLog)
+            if (!owner.ShouldStatisticsLog())
             {
                 return;
             }
@@ -83,9 +86,9 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (protocolVersion != owner.profile.protocolVersion)
+            if (owner.ShouldDebugLog() && protocolVersion != owner.profile.protocolVersion)
             {
-                Debug.LogWarning("CanvasUiSync protocol version mismatch: local=" + owner.profile.protocolVersion + " remote=" + protocolVersion, owner);
+                LogProtocolVersionMismatch(owner, protocolVersion);
             }
 
             if (owner.nodes.TryGetValue(nodeId, out var node))
@@ -103,7 +106,10 @@ namespace Mizotake.UnityUiSync
             else
             {
                 owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime);
-                Debug.Log("CanvasUiSync peer join: " + nodeId + " canvas=" + owner.canvasId, owner);
+                if (owner.ShouldDebugLog())
+                {
+                    LogPeerJoin(owner, nodeId);
+                }
                 owner.hasSnapshot = false;
                 owner.snapshotRetryCount = 0;
                 owner.RequestSnapshotIfNeeded(true);
@@ -130,15 +136,18 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (owner.profile.logRegistryHashMismatch && !string.Equals(incomingRegistryHash, owner.registryHash, StringComparison.Ordinal))
+            if (owner.ShouldDebugLog() && owner.profile.logRegistryHashMismatch && !string.Equals(incomingRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
-                Debug.LogWarning("CanvasUiSync registryHash mismatch: local=" + owner.registryHash + " remote=" + incomingRegistryHash, owner);
+                LogRegistryHashMismatch(owner, incomingRegistryHash);
             }
 
             var endpoint = owner.FindPeerTarget(nodeId);
             if (endpoint == null)
             {
-                Debug.LogWarning("CanvasUiSync requestSnapshot target was not configured: " + nodeId, owner);
+                if (owner.ShouldDebugLog())
+                {
+                    LogRequestSnapshotTargetMissing(owner, nodeId);
+                }
                 return;
             }
 
@@ -165,7 +174,10 @@ namespace Mizotake.UnityUiSync
 
             var snapshotId = ReadString(values, 0);
             owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
-            Debug.Log("CanvasUiSync snapshot begin: " + snapshotId + " canvas=" + owner.canvasId, owner);
+            if (owner.ShouldDebugLog())
+            {
+                LogSnapshotBegin(owner, snapshotId);
+            }
         }
 
         internal static void HandleSnapshotState(CanvasUiSync owner, object[] values)
@@ -223,7 +235,10 @@ namespace Mizotake.UnityUiSync
 
             owner.hasSnapshot = true;
             owner.snapshotRetryCount = 0;
-            Debug.Log("CanvasUiSync snapshot end: canvas=" + owner.canvasId, owner);
+            if (owner.ShouldDebugLog())
+            {
+                LogSnapshotEnd(owner);
+            }
         }
 
         internal static void HandleCommitState(CanvasUiSync owner, object[] values)
@@ -315,9 +330,9 @@ namespace Mizotake.UnityUiSync
 
             if (owner.latestAppliedButtonStamps.TryGetValue(syncId, out var lastStamp) && !owner.IsIncomingStampNewer(lastStamp, stamp))
             {
-                if (owner.profile.verboseLog)
+                if (owner.ShouldVerboseLog())
                 {
-                    Debug.Log("CanvasUiSync stale button discard: " + syncId + " ticks=" + stamp.LogicalTicks + " node=" + stamp.NodeId, owner);
+                    LogStaleButtonDiscard(owner, syncId, stamp);
                 }
 
                 return false;
@@ -349,7 +364,10 @@ namespace Mizotake.UnityUiSync
                 return false;
             }
 
-            Debug.LogWarning("CanvasUiSync unauthorized peer reject: " + nodeId, owner);
+            if (owner.ShouldDebugLog())
+            {
+                LogUnauthorizedPeerReject(owner, nodeId);
+            }
             return true;
         }
 
@@ -382,7 +400,10 @@ namespace Mizotake.UnityUiSync
             }
             catch (Exception exception)
             {
-                Debug.LogWarning("CanvasUiSync ignored malformed stamp: " + exception.Message, owner);
+                if (owner.ShouldDebugLog())
+                {
+                    LogMalformedStamp(owner, exception.Message);
+                }
                 return false;
             }
         }
@@ -430,18 +451,156 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleUnknownSyncId(CanvasUiSync owner, string syncId)
         {
-            if (owner.profile.logUnknownSyncId)
+            if (owner.ShouldDebugLog() && owner.profile.logUnknownSyncId)
             {
-                Debug.LogWarning("CanvasUiSync unknown syncId: " + syncId, owner);
+                LogUnknownSyncId(owner, syncId);
             }
         }
 
         internal static void HandleTypeMismatch(CanvasUiSync owner, string syncId, string localType, string remoteType)
         {
-            if (owner.profile.logTypeMismatch)
+            if (owner.ShouldDebugLog() && owner.profile.logTypeMismatch)
             {
-                Debug.LogError("CanvasUiSync type mismatch: syncId=" + syncId + " local=" + localType + " remote=" + remoteType, owner);
+                LogTypeMismatch(owner, syncId, localType, remoteType);
             }
+        }
+
+        private static void LogMalformedPayload(CanvasUiSync owner, string address, string reason)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync ignored malformed payload: address=");
+            builder.Append(address);
+            builder.Append(" reason=");
+            builder.Append(reason);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogProtocolVersionMismatch(CanvasUiSync owner, int remoteProtocolVersion)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync protocol version mismatch: local=");
+            builder.Append(owner.profile.protocolVersion);
+            builder.Append(" remote=");
+            builder.Append(remoteProtocolVersion);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogPeerJoin(CanvasUiSync owner, string nodeId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync peer join: ");
+            builder.Append(nodeId);
+            builder.Append(" canvas=");
+            builder.Append(owner.canvasId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogRegistryHashMismatch(CanvasUiSync owner, string incomingRegistryHash)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync registryHash mismatch: local=");
+            builder.Append(owner.registryHash);
+            builder.Append(" remote=");
+            builder.Append(incomingRegistryHash);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogRequestSnapshotTargetMissing(CanvasUiSync owner, string nodeId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync requestSnapshot target was not configured: ");
+            builder.Append(nodeId);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogSnapshotBegin(CanvasUiSync owner, string snapshotId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync snapshot begin: ");
+            builder.Append(snapshotId);
+            builder.Append(" canvas=");
+            builder.Append(owner.canvasId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogSnapshotEnd(CanvasUiSync owner)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync snapshot end: canvas=");
+            builder.Append(owner.canvasId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogStaleButtonDiscard(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync stale button discard: ");
+            builder.Append(syncId);
+            builder.Append(" ticks=");
+            builder.Append(stamp.LogicalTicks);
+            builder.Append(" node=");
+            builder.Append(stamp.NodeId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogUnauthorizedPeerReject(CanvasUiSync owner, string nodeId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync unauthorized peer reject: ");
+            builder.Append(nodeId);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogMalformedStamp(CanvasUiSync owner, string reason)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync ignored malformed stamp: ");
+            builder.Append(reason);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogUnknownSyncId(CanvasUiSync owner, string syncId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync unknown syncId: ");
+            builder.Append(syncId);
+            Debug.LogWarning(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogTypeMismatch(CanvasUiSync owner, string syncId, string localType, string remoteType)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync type mismatch: syncId=");
+            builder.Append(syncId);
+            builder.Append(" local=");
+            builder.Append(localType);
+            builder.Append(" remote=");
+            builder.Append(remoteType);
+            Debug.LogError(builder.ToString(), owner);
+            builder.Length = 0;
         }
 
         private static string ReadString(object[] values, int index)

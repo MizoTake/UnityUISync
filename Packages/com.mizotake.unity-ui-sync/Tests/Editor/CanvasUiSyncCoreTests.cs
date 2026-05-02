@@ -414,6 +414,37 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void ScanBindings_DropdownPolledBinding_UsesIntReader()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var dropdownObject = DefaultControls.CreateDropdown(new DefaultControls.Resources());
+            dropdownObject.name = "ModeDropdown";
+            dropdownObject.transform.SetParent(canvasObject.transform, false);
+            var dropdown = dropdownObject.GetComponent<Dropdown>();
+            dropdown.options.Clear();
+            dropdown.options.Add(new Dropdown.OptionData("Idle"));
+            dropdown.options.Add(new Dropdown.OptionData("Live"));
+            dropdown.SetValueWithoutNotify(0);
+            dropdown.RefreshShownValue();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "ScanBindings");
+
+            var binding = ((IEnumerable)GetPrivateField(sync, "polledBindings")).Cast<object>().Single();
+            var tryReadIntValue = binding.GetType().GetMethod("TryReadIntValue", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var arguments = new object[] { 0 };
+
+            Assert.That(tryReadIntValue, Is.Not.Null);
+            Assert.That((bool)tryReadIntValue.Invoke(binding, arguments), Is.True);
+            Assert.That((int)arguments[0], Is.EqualTo(0));
+
+            dropdown.SetValueWithoutNotify(1);
+            Assert.That((bool)tryReadIntValue.Invoke(binding, arguments), Is.True);
+            Assert.That((int)arguments[0], Is.EqualTo(1));
+        }
+
+        [Test]
         public void UpdatePolledBindings_ProgrammaticDropdownSelection_BroadcastsOnlyDropdownAndChangedOptions()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -562,6 +593,24 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var renamedSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
 
             Assert.That(renamedSignature, Is.Not.EqualTo(initialSignature));
+        }
+
+        [Test]
+        public void ComputeBindingHierarchySignature_ReusesBindingScanContext()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("ModeToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+
+            var context = GetPrivateField(sync, "bindingScanContext");
+            var initialSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            var repeatedSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+
+            Assert.That(GetPrivateField(sync, "bindingScanContext"), Is.SameAs(context));
+            Assert.That(repeatedSignature, Is.EqualTo(initialSignature));
         }
 
         [Test]
@@ -1014,6 +1063,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(peerB, Is.Not.Null);
             Assert.That(peerA.nodeId, Is.EqualTo("PeerA"));
             Assert.That(peerA.enableOscTransport, Is.True);
+            Assert.That(peerA.enableDebugLog, Is.False);
             Assert.That(peerA.listenPort, Is.EqualTo(9000));
             Assert.That(peerA.allowedPeers, Is.EquivalentTo(new[] { "PeerB" }));
             Assert.That(peerA.peerEndpoints.Count, Is.EqualTo(1));
@@ -1021,11 +1071,32 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(peerA.peerEndpoints[0].port, Is.EqualTo(9001));
             Assert.That(peerB.nodeId, Is.EqualTo("PeerB"));
             Assert.That(peerB.enableOscTransport, Is.True);
+            Assert.That(peerB.enableDebugLog, Is.False);
             Assert.That(peerB.listenPort, Is.EqualTo(9001));
             Assert.That(peerB.allowedPeers, Is.EquivalentTo(new[] { "PeerA" }));
             Assert.That(peerB.peerEndpoints.Count, Is.EqualTo(1));
             Assert.That(peerB.peerEndpoints[0].name, Is.EqualTo("PeerA"));
             Assert.That(peerB.peerEndpoints[0].port, Is.EqualTo(9000));
+        }
+
+        [Test]
+        public void Profile_DefaultDebugLog_IsDisabled()
+        {
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, profile);
+
+            Assert.That(profile.enableDebugLog, Is.False);
+            Assert.That((bool)InvokePrivate(sync, "ShouldDebugLog"), Is.False);
+            Assert.That((bool)InvokePrivate(sync, "ShouldStatisticsLog"), Is.False);
+
+            profile.enableDebugLog = true;
+            Assert.That((bool)InvokePrivate(sync, "ShouldDebugLog"), Is.True);
+            Assert.That((bool)InvokePrivate(sync, "ShouldStatisticsLog"), Is.False);
+
+            profile.enableStatisticsLog = true;
+            Assert.That((bool)InvokePrivate(sync, "ShouldStatisticsLog"), Is.True);
         }
 
         [Test]

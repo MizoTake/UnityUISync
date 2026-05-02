@@ -25,6 +25,7 @@ namespace Mizotake.UnityUiSync
         public bool allowDynamicPeerJoin = false;
         public List<string> allowedPeers = new List<string>();
         public List<CanvasUiSyncRemoteEndpoint> peerEndpoints = new List<CanvasUiSyncRemoteEndpoint>();
+        public bool enableDebugLog;
         public bool verboseLog = true;
         public bool logUnknownSyncId = true;
         public bool logTypeMismatch = true;

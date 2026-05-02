@@ -56,9 +56,9 @@ namespace Mizotake.UnityUiSync
                 var now = Time.unscaledTime;
                 if (owner.lastProposeTimes.TryGetValue(binding.SyncId, out var lastProposeAt) && now - lastProposeAt < Mathf.Max(0f, owner.profile.minimumProposeIntervalSeconds))
                 {
-                    if (owner.profile.verboseLog)
+                    if (owner.ShouldVerboseLog())
                     {
-                        Debug.Log("CanvasUiSync throttle propose: " + binding.SyncId, owner);
+                        LogThrottlePropose(owner, binding.SyncId);
                     }
 
                     return;
@@ -149,6 +149,17 @@ namespace Mizotake.UnityUiSync
 
             foreach (var binding in owner.polledBindings)
             {
+                if (binding.TryReadIntValue(out var currentIntValue))
+                {
+                    if (owner.localStates.TryGetValue(binding.SyncId, out var intState) && intState.Value is int previousIntValue && previousIntValue == currentIntValue)
+                    {
+                        continue;
+                    }
+
+                    owner.OnLocalStateChanged(binding, currentIntValue, false);
+                    continue;
+                }
+
                 var currentValue = binding.ReadValue();
                 if (owner.localStates.TryGetValue(binding.SyncId, out var state) && AreEquivalent(state.Value, currentValue))
                 {
@@ -252,9 +263,9 @@ namespace Mizotake.UnityUiSync
 
             if (!owner.IsIncomingStampNewer(state.Stamp, stamp))
             {
-                if (owner.profile.verboseLog)
+                if (owner.ShouldVerboseLog())
                 {
-                    Debug.Log("CanvasUiSync stale state discard: " + syncId + " ticks=" + stamp.LogicalTicks + " node=" + stamp.NodeId, owner);
+                    LogStaleStateDiscard(owner, syncId, stamp);
                 }
 
                 return;
@@ -340,6 +351,30 @@ namespace Mizotake.UnityUiSync
             }
 
             return Equals(left, right);
+        }
+
+        private static void LogThrottlePropose(CanvasUiSync owner, string syncId)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync throttle propose: ");
+            builder.Append(syncId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
+        }
+
+        private static void LogStaleStateDiscard(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
+        {
+            var builder = owner.stringBuilderScratch;
+            builder.Length = 0;
+            builder.Append("CanvasUiSync stale state discard: ");
+            builder.Append(syncId);
+            builder.Append(" ticks=");
+            builder.Append(stamp.LogicalTicks);
+            builder.Append(" node=");
+            builder.Append(stamp.NodeId);
+            Debug.Log(builder.ToString(), owner);
+            builder.Length = 0;
         }
 
         private static bool IsDropdownBinding(CanvasUiSync.UiSyncBinding binding)
