@@ -59,6 +59,11 @@ namespace Mizotake.UnityUiSync
                 return CanvasUiSyncBindingsService.BuildIndexedSyncIdFingerprint(owner, target, componentTypePrefix, index, pathHashCache);
             }
 
+            public string BuildSyncIdPrefix(Transform target, string componentTypePrefix)
+            {
+                return CanvasUiSyncBindingsService.BuildSyncIdPrefix(owner, target, componentTypePrefix, pathCache);
+            }
+
             public bool IsTemplateComponent(Transform target)
             {
                 return IsUnderRoots(target, dropdownTemplateRoots);
@@ -421,6 +426,22 @@ namespace Mizotake.UnityUiSync
             return owner.canvasId + "/" + BuildPath(owner, target, pathCache) + ":" + componentType;
         }
 
+        internal static string BuildSyncIdPrefix(CanvasUiSync owner, Transform target, string componentTypePrefix)
+        {
+            return BuildSyncIdPrefix(owner, target, componentTypePrefix, null);
+        }
+
+        private static string BuildSyncIdPrefix(CanvasUiSync owner, Transform target, string componentTypePrefix, Dictionary<Transform, string> pathCache)
+        {
+            var bindingId = ReadExplicitBindingId(target);
+            if (!string.IsNullOrWhiteSpace(bindingId))
+            {
+                return owner.canvasId + "/" + bindingId + ":" + componentTypePrefix;
+            }
+
+            return owner.canvasId + "/" + BuildPath(owner, target, pathCache) + ":" + componentTypePrefix;
+        }
+
         internal static string BuildPath(CanvasUiSync owner, Transform target)
         {
             return BuildPath(owner, target, null);
@@ -726,19 +747,21 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterDropdownItemToggles(CanvasUiSync owner, Dropdown dropdown, BindingScanContext context)
         {
+            var syncIdPrefix = context.BuildSyncIdPrefix(dropdown.transform, "DropdownItemToggle[");
             for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
             {
                 var capturedOptionIndex = optionIndex;
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, context.BuildSyncId(dropdown.transform, "DropdownItemToggle[" + capturedOptionIndex + "]"), "Toggle", () => ReadDropdownItemToggle(owner, dropdown, capturedOptionIndex), value => SetDropdownItemToggle(owner, dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, syncIdPrefix + capturedOptionIndex + "]", "Toggle", () => ReadDropdownItemToggle(owner, dropdown, capturedOptionIndex), value => SetDropdownItemToggle(owner, dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false));
             }
         }
 
         private static void RegisterTmpDropdownItemToggles(CanvasUiSync owner, TMP_Dropdown dropdown, BindingScanContext context)
         {
+            var syncIdPrefix = context.BuildSyncIdPrefix(dropdown.transform, "TMP_DropdownItemToggle[");
             for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
             {
                 var capturedOptionIndex = optionIndex;
-                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, context.BuildSyncId(dropdown.transform, "TMP_DropdownItemToggle[" + capturedOptionIndex + "]"), "Toggle", () => ReadDropdownItemToggle(owner, dropdown, capturedOptionIndex), value => SetDropdownItemToggle(owner, dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false));
+                owner.RegisterBinding(new CanvasUiSync.UiSyncBinding(dropdown, syncIdPrefix + capturedOptionIndex + "]", "Toggle", () => ReadDropdownItemToggle(owner, dropdown, capturedOptionIndex), value => SetDropdownItemToggle(owner, dropdown, capturedOptionIndex, Convert.ToBoolean(value)), false));
             }
         }
 
@@ -752,10 +775,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
-                {
-                    hash = (hash * 31) + context.BuildIndexedSyncIdFingerprint(dropdown.transform, "DropdownItemToggle", optionIndex);
-                }
+                AppendIndexedBindingHierarchySignatures(ref hash, context.BuildSyncIdFingerprint(dropdown.transform, "DropdownItemToggle"), dropdown.options.Count);
             }
         }
 
@@ -769,10 +789,16 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
-                {
-                    hash = (hash * 31) + context.BuildIndexedSyncIdFingerprint(dropdown.transform, "TMP_DropdownItemToggle", optionIndex);
-                }
+                AppendIndexedBindingHierarchySignatures(ref hash, context.BuildSyncIdFingerprint(dropdown.transform, "TMP_DropdownItemToggle"), dropdown.options.Count);
+            }
+        }
+
+        private static void AppendIndexedBindingHierarchySignatures(ref int hash, int baseFingerprint, int count)
+        {
+            var indexedFingerprintSeed = CombineFingerprint(baseFingerprint, '[');
+            for (var optionIndex = 0; optionIndex < count; optionIndex++)
+            {
+                hash = (hash * 31) + CombineFingerprint(indexedFingerprintSeed, optionIndex);
             }
         }
 

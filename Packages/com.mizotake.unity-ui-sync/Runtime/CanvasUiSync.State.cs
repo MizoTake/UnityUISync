@@ -405,26 +405,28 @@ namespace Mizotake.UnityUiSync
 
             if (previousSelectedIndex >= 0 && previousSelectedIndex < optionCount)
             {
+                var optionSyncIdPrefix = owner.BuildSyncIdPrefix(dropdownTransform, optionBindingPrefix);
                 if (previousSelectedIndex == nextSelectedIndex)
                 {
-                    SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                    SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
                     return;
                 }
 
-                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, previousSelectedIndex, false, stamp, broadcastChanges);
-                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, previousSelectedIndex, false, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
                 return;
             }
 
+            var fallbackOptionSyncIdPrefix = owner.BuildSyncIdPrefix(dropdownTransform, optionBindingPrefix);
             for (var optionIndex = 0; optionIndex < optionCount; optionIndex++)
             {
-                SyncDropdownItemToggleState(owner, dropdownTransform, optionBindingPrefix, optionIndex, optionIndex == nextSelectedIndex, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, fallbackOptionSyncIdPrefix, optionIndex, optionIndex == nextSelectedIndex, stamp, broadcastChanges);
             }
         }
 
-        private static void SyncDropdownItemToggleState(CanvasUiSync owner, Transform dropdownTransform, string optionBindingPrefix, int optionIndex, bool targetValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        private static void SyncDropdownItemToggleState(CanvasUiSync owner, string optionSyncIdPrefix, int optionIndex, bool targetValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
         {
-            var syncId = owner.BuildSyncId(dropdownTransform, optionBindingPrefix + optionIndex + "]");
+            var syncId = optionSyncIdPrefix + optionIndex + "]";
             if (!owner.bindings.TryGetValue(syncId, out var optionBinding))
             {
                 return;

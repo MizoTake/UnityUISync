@@ -624,6 +624,11 @@ namespace Mizotake.UnityUiSync
             return CanvasUiSyncBindingsService.BuildSyncId(this, target, componentType);
         }
 
+        internal string BuildSyncIdPrefix(Transform target, string componentTypePrefix)
+        {
+            return CanvasUiSyncBindingsService.BuildSyncIdPrefix(this, target, componentTypePrefix);
+        }
+
         internal string BuildPath(Transform target)
         {
             return CanvasUiSyncBindingsService.BuildPath(this, target);
