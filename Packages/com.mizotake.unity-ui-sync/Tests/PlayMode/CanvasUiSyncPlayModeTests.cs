@@ -754,6 +754,283 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator StaticDeepHierarchyToggle_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeerWithStaticNestedToggle("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort, "StaticDeepToggle");
+            var peerB = CreatePeerWithStaticNestedToggle("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort, "StaticDeepToggle");
+            yield return null;
+            yield return null;
+
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/StaticRoot/StaticBranch/StaticLeaf/StaticDeepToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/StaticRoot/StaticBranch/StaticLeaf/StaticDeepToggle:Toggle"), Is.True);
+
+            peerA.toggle.isOn = true;
+            yield return WaitUntil(() => peerB.toggle.isOn, 60);
+
+            Assert.That(peerB.toggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_SyncsAcrossPeers()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "RuntimeRoot", "RuntimeBranch", "RuntimeLeaf");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "RuntimeRoot", "RuntimeBranch", "RuntimeLeaf");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "RuntimeDeepToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "RuntimeDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeRoot/RuntimeBranch/RuntimeLeaf/RuntimeDeepToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/RuntimeRoot/RuntimeBranch/RuntimeLeaf/RuntimeDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitUntil(() => peerBToggle.isOn, 60);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_AddedOnRemoteAfterCommit_AppliesPendingState()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "LateRoot", "LateBranch", "LateLeaf");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "LateDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/LateRoot/LateBranch/LateLeaf/LateDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/LateRoot/LateBranch/LateLeaf/LateDeepToggle:Toggle"), Is.False);
+
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "LateRoot", "LateBranch", "LateLeaf");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "LateDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/LateRoot/LateBranch/LateLeaf/LateDeepToggle:Toggle") && peerBToggle.isOn, 60);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_RemoteMissingWhileMultipleCommits_AppliesLatestPendingState()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "PendingRoot", "PendingBranch", "PendingLeaf");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "PendingDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/PendingRoot/PendingBranch/PendingLeaf/PendingDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitFrames(5);
+            peerAToggle.isOn = false;
+            yield return WaitFrames(10);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/PendingRoot/PendingBranch/PendingLeaf/PendingDeepToggle:Toggle"), Is.False);
+
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "PendingRoot", "PendingBranch", "PendingLeaf");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "PendingDeepToggle");
+            peerBToggle.SetIsOnWithoutNotify(true);
+            yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/PendingRoot/PendingBranch/PendingLeaf/PendingDeepToggle:Toggle") && !peerBToggle.isOn, 60);
+
+            Assert.That(peerBToggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_RemoteAncestorsBeforeLeaf_PendingSurvivesPartialRescans()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "PartialRoot", "PartialBranch", "PartialLeaf");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "PartialDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/PartialRoot/PartialBranch/PartialLeaf/PartialDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitFrames(10);
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "PartialRoot", "PartialBranch", "PartialLeaf");
+            yield return WaitFrames(20);
+
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/PartialRoot/PartialBranch/PartialLeaf/PartialDeepToggle:Toggle"), Is.False);
+
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "PartialDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/PartialRoot/PartialBranch/PartialLeaf/PartialDeepToggle:Toggle") && peerBToggle.isOn, 60);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_InactiveRemoteParent_AppliesWhileHiddenAndStaysSyncedAfterActivation()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "HiddenRoot", "HiddenBranch", "HiddenLeaf");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "HiddenRoot", "HiddenBranch", "HiddenLeaf");
+            peerBContainer.gameObject.SetActive(false);
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "HiddenDeepToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "HiddenDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/HiddenRoot/HiddenBranch/HiddenLeaf/HiddenDeepToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/HiddenRoot/HiddenBranch/HiddenLeaf/HiddenDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitUntil(() => peerBToggle.isOn, 60);
+            Assert.That(peerBToggle.isOn, Is.True);
+
+            peerBContainer.gameObject.SetActive(true);
+            yield return null;
+            Assert.That(peerBToggle.isOn, Is.True);
+
+            peerBToggle.isOn = false;
+            yield return WaitUntil(() => !peerAToggle.isOn, 60);
+
+            Assert.That(peerAToggle.isOn, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDropdown_InactiveRemoteParent_CatchesUpAndDoesNotRegisterRuntimeItems()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "HiddenDropdownRoot", "HiddenDropdownBranch", "HiddenDropdownLeaf");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "HiddenDropdownRoot", "HiddenDropdownBranch", "HiddenDropdownLeaf");
+            peerBContainer.gameObject.SetActive(false);
+            var peerADropdown = CreateRuntimeDropdown(peerAContainer, "HiddenDeepDropdown");
+            var peerBDropdown = CreateRuntimeDropdown(peerBContainer, "HiddenDeepDropdown");
+            peerADropdown.alphaFadeSpeed = 0f;
+            peerBDropdown.alphaFadeSpeed = 0f;
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/HiddenDropdownRoot/HiddenDropdownBranch/HiddenDropdownLeaf/HiddenDeepDropdown:Dropdown") && HasBinding(peerB.sync, "DemoCanvas/HiddenDropdownRoot/HiddenDropdownBranch/HiddenDropdownLeaf/HiddenDeepDropdown:Dropdown") && HasBinding(peerA.sync, "DemoCanvas/HiddenDropdownRoot/HiddenDropdownBranch/HiddenDropdownLeaf/HiddenDeepDropdown:DropdownExpanded") && HasBinding(peerB.sync, "DemoCanvas/HiddenDropdownRoot/HiddenDropdownBranch/HiddenDropdownLeaf/HiddenDeepDropdown:DropdownExpanded"), 60);
+
+            var peerABindingCount = GetBindingCount(peerA.sync);
+            var peerBBindingCount = GetBindingCount(peerB.sync);
+            peerADropdown.value = 2;
+            yield return WaitUntil(() => peerBDropdown.value == 2, 60);
+
+            Assert.That(peerBDropdown.value, Is.EqualTo(2));
+            peerBContainer.gameObject.SetActive(true);
+            yield return null;
+            Assert.That(peerBDropdown.value, Is.EqualTo(2));
+
+            peerADropdown.Show();
+            yield return WaitUntil(() => IsDropdownExpanded(peerADropdown) && IsDropdownExpanded(peerBDropdown), 60);
+
+            Assert.That(GetBindingCount(peerA.sync), Is.EqualTo(peerABindingCount), DescribeBindings(peerA.sync));
+            Assert.That(GetBindingCount(peerB.sync), Is.EqualTo(peerBBindingCount), DescribeBindings(peerB.sync));
+
+            peerADropdown.Hide();
+            yield return WaitUntil(() => !IsDropdownExpanded(peerADropdown) && !IsDropdownExpanded(peerBDropdown), 60);
+
+            Assert.That(GetBindingCount(peerA.sync), Is.EqualTo(peerABindingCount), DescribeBindings(peerA.sync));
+            Assert.That(GetBindingCount(peerB.sync), Is.EqualTo(peerBBindingCount), DescribeBindings(peerB.sync));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_ParentCreatedBeforeControl_SyncsAfterLateControlInsertion()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "StagedRoot", "StagedBranch", "StagedLeaf");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "StagedRoot", "StagedBranch", "StagedLeaf");
+            yield return WaitFrames(20);
+
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/StagedRoot/StagedBranch/StagedLeaf/StagedDeepToggle:Toggle"), Is.False);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/StagedRoot/StagedBranch/StagedLeaf/StagedDeepToggle:Toggle"), Is.False);
+
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "StagedDeepToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "StagedDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/StagedRoot/StagedBranch/StagedLeaf/StagedDeepToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/StagedRoot/StagedBranch/StagedLeaf/StagedDeepToggle:Toggle"), 120);
+
+            peerAToggle.isOn = true;
+            yield return WaitUntil(() => peerBToggle.isOn, 60);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_RemoteSyncDisabledDuringCreation_CatchesUpOnEnable()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            peerB.sync.DisableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.False);
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "OfflineRoot", "OfflineBranch", "OfflineLeaf");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "OfflineRoot", "OfflineBranch", "OfflineLeaf");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "OfflineDeepToggle");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "OfflineDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/OfflineRoot/OfflineBranch/OfflineLeaf/OfflineDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerBToggle.isOn, Is.False);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/OfflineRoot/OfflineBranch/OfflineLeaf/OfflineDeepToggle:Toggle"), Is.False);
+
+            peerB.sync.EnableSync();
+            Assert.That(peerB.sync.SyncEnabled, Is.True);
+            yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/OfflineRoot/OfflineBranch/OfflineLeaf/OfflineDeepToggle:Toggle") && peerBToggle.isOn, 120);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedDeepHierarchyToggle_WithBindingId_ReparentedAfterRegistration_KeepsSyncing()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var peerAContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "BindingRootA", "BindingBranchA", "BindingLeafA");
+            var peerBContainer = CreateNestedRuntimeContainer(peerB.sync.transform, "BindingRootB", "BindingBranchB", "BindingLeafB");
+            var peerAToggle = CreateRuntimeToggle(peerAContainer, "MovingDeepToggleA");
+            var peerBToggle = CreateRuntimeToggle(peerBContainer, "MovingDeepToggleB");
+            AddBindingId(peerAToggle.gameObject, "SharedMovingDeepToggle");
+            AddBindingId(peerBToggle.gameObject, "SharedMovingDeepToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/SharedMovingDeepToggle:Toggle") && HasBinding(peerB.sync, "DemoCanvas/SharedMovingDeepToggle:Toggle"), 60);
+
+            peerAToggle.isOn = true;
+            yield return WaitUntil(() => peerBToggle.isOn, 60);
+            Assert.That(peerBToggle.isOn, Is.True);
+
+            var peerANewContainer = CreateNestedRuntimeContainer(peerA.sync.transform, "MovedRoot", "MovedBranch", "MovedLeaf");
+            peerAToggle.transform.SetParent(peerANewContainer, false);
+            yield return WaitFrames(5);
+
+            peerBToggle.isOn = false;
+            yield return WaitUntil(() => !peerAToggle.isOn, 60);
+
+            Assert.That(peerAToggle.isOn, Is.False);
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/SharedMovingDeepToggle:Toggle"), Is.True);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/SharedMovingDeepToggle:Toggle"), Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator SameNameSiblingToggles_SyncByHierarchyOrder()
         {
             var ports = AllocatePortPair();
@@ -1116,6 +1393,27 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             return (sync, toggle, presenter);
         }
 
+        private static (CanvasUiSync sync, Toggle toggle) CreatePeerWithStaticNestedToggle(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, string toggleName)
+        {
+            var canvasObject = new GameObject(canvasName, typeof(Canvas), typeof(GraphicRaycaster));
+            canvasObject.SetActive(false);
+            var nestedParent = CreateNestedRuntimeContainer(canvasObject.transform, "StaticRoot", "StaticBranch", "StaticLeaf");
+            var toggle = CreateRuntimeToggle(nestedParent, toggleName);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.profileName = nodeId;
+            profile.nodeId = nodeId;
+            profile.enableOscTransport = false;
+            profile.listenPort = listenPort;
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.allowedPeers.Add(remoteNodeId);
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = remoteNodeId, ipAddress = "127.0.0.1", port = remotePort, enabled = true });
+            SetPrivateField(sync, "profile", profile);
+            SetPrivateField(sync, "canvasIdOverride", "DemoCanvas");
+            canvasObject.SetActive(true);
+            return (sync, toggle);
+        }
+
         private static (int peerAPort, int peerBPort) AllocatePortPair()
         {
             var peerAPort = nextTestPort;
@@ -1211,6 +1509,17 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var containerObject = new GameObject(objectName, typeof(RectTransform));
             containerObject.transform.SetParent(parent, false);
             return containerObject.transform;
+        }
+
+        private static Transform CreateNestedRuntimeContainer(Transform parent, params string[] objectNames)
+        {
+            var current = parent;
+            for (var index = 0; index < objectNames.Length; index++)
+            {
+                current = CreateRuntimeContainer(current, objectNames[index]);
+            }
+
+            return current;
         }
 
         private static Toggle CreateRuntimeToggle(Transform parent, string toggleName)
