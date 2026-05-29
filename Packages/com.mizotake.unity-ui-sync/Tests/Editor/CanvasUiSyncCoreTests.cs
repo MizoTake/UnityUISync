@@ -9,6 +9,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using Unity.Profiling;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -557,6 +558,116 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HotPathProfiling_LargeHierarchyReportsSteadyStateAllocationAndMarkerBaselines()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            for (var index = 0; index < 48; index++)
+            {
+                new GameObject("Toggle" + index, typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+                var sliderObject = DefaultControls.CreateSlider(new DefaultControls.Resources());
+                sliderObject.name = "Slider" + index;
+                sliderObject.transform.SetParent(canvasObject.transform, false);
+                var scrollbarObject = DefaultControls.CreateScrollbar(new DefaultControls.Resources());
+                scrollbarObject.name = "Scrollbar" + index;
+                scrollbarObject.transform.SetParent(canvasObject.transform, false);
+            }
+
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var initialSignature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            for (var index = 0; index < 5; index++)
+            {
+                InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            }
+
+            var signatureMarkerRecorder = StartMarkerRecorder("CanvasUiSync.ComputeBindingHierarchySignature");
+            var signatureStopwatch = Stopwatch.StartNew();
+            var signatureAllocatedBefore = global::System.GC.GetAllocatedBytesForCurrentThread();
+            using var signatureRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "CanvasUiSync.ComputeBindingHierarchySignature");
+            var signature = initialSignature;
+            for (var index = 0; index < 100; index++)
+            {
+                signature = (int)InvokePrivate(sync, "ComputeBindingHierarchySignature");
+            }
+
+            var signatureAllocatedBytes = global::System.GC.GetAllocatedBytesForCurrentThread() - signatureAllocatedBefore;
+            signatureStopwatch.Stop();
+            signatureMarkerRecorder.enabled = false;
+            var bindings = (IDictionary)GetPrivateField(sync, "bindings");
+            var sliderBinding = bindings.Values.Cast<object>().First(binding => string.Equals((string)binding.GetType().GetProperty("ValueType").GetValue(binding), "Slider", System.StringComparison.Ordinal));
+            var broadcastMarkerRecorder = StartMarkerRecorder("CanvasUiSync.BroadcastCommit");
+            var broadcastAllocatedBefore = global::System.GC.GetAllocatedBytesForCurrentThread();
+            using var broadcastRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "CanvasUiSync.BroadcastCommit");
+            for (var index = 0; index < 10; index++)
+            {
+                InvokePrivate(sync, "BroadcastCommit", GetBindingSyncId(sliderBinding), "Slider", 0.5f, CreateStamp(sync, 100L + index, "PeerA", index + 1));
+            }
+
+            var broadcastAllocatedBytes = global::System.GC.GetAllocatedBytesForCurrentThread() - broadcastAllocatedBefore;
+            broadcastMarkerRecorder.enabled = false;
+            TestContext.WriteLine("CanvasUiSync hot path baseline: bindings=" + bindings.Count + " signature100CallsMs=" + signatureStopwatch.Elapsed.TotalMilliseconds.ToString("F3") + " signatureAllocBytes=" + signatureAllocatedBytes + " signatureProfilerRecorderSamples=" + (signatureRecorder.Valid ? signatureRecorder.Count : -1) + " signatureMarkerSamples=" + signatureMarkerRecorder.sampleBlockCount + " broadcast10AllocBytes=" + broadcastAllocatedBytes + " broadcastProfilerRecorderSamples=" + (broadcastRecorder.Valid ? broadcastRecorder.Count : -1) + " broadcastMarkerSamples=" + broadcastMarkerRecorder.sampleBlockCount + " sentMessages=" + (int)GetPrivateField(sync, "sentMessageCount"));
+
+            Assert.That(signature, Is.EqualTo(initialSignature));
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(10));
+            Assert.That(signatureRecorder.Valid, Is.True);
+            Assert.That(broadcastRecorder.Valid, Is.True);
+            Assert.That(signatureMarkerRecorder.sampleBlockCount, Is.GreaterThan(0));
+            Assert.That(broadcastMarkerRecorder.sampleBlockCount, Is.GreaterThan(0));
+            Assert.That(signatureAllocatedBytes, Is.LessThan(2_000_000L));
+            Assert.That(broadcastAllocatedBytes, Is.LessThan(1_000_000L));
+        }
+
+        [Test]
+        public void HotPathProfiling_SendSnapshotAndSendToReportMarkerBaselines()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeId = "PeerA";
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var targetObject = new GameObject("TargetCanvas", typeof(Canvas));
+            var targetSync = targetObject.AddComponent<CanvasUiSync>();
+            var targetProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            targetProfile.nodeId = "PeerB";
+            targetProfile.allowedPeers.Add("PeerA");
+            AssignProfile(targetSync, targetProfile);
+            AssignCanvasIdOverride(targetSync, "OperationCanvas");
+            InvokePrivate(targetSync, "Awake");
+
+            var scanMarkerRecorder = StartMarkerRecorder("CanvasUiSync.ScanBindings");
+            using var scanRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "CanvasUiSync.ScanBindings");
+            for (var index = 0; index < 5; index++)
+            {
+                InvokePrivate(sync, "ScanBindings");
+            }
+
+            scanMarkerRecorder.enabled = false;
+            var snapshotMarkerRecorder = StartMarkerRecorder("CanvasUiSync.SendSnapshot");
+            using var snapshotRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "CanvasUiSync.SendSnapshot");
+            InvokePrivate(sync, "SendSnapshot", targetSync);
+            snapshotMarkerRecorder.enabled = false;
+            var sendToMarkerRecorder = StartMarkerRecorder("CanvasUiSync.SendTo");
+            using var sendToRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "CanvasUiSync.SendTo");
+            InvokePrivate(sync, "SendTo", "127.0.0.1", 9001, "/uisync/test", new object[] { "value" });
+            sendToMarkerRecorder.enabled = false;
+
+            TestContext.WriteLine("CanvasUiSync marker baseline: scanProfilerRecorderSamples=" + (scanRecorder.Valid ? scanRecorder.Count : -1) + " scanMarkerSamples=" + scanMarkerRecorder.sampleBlockCount + " snapshotProfilerRecorderSamples=" + (snapshotRecorder.Valid ? snapshotRecorder.Count : -1) + " snapshotMarkerSamples=" + snapshotMarkerRecorder.sampleBlockCount + " sendToProfilerRecorderSamples=" + (sendToRecorder.Valid ? sendToRecorder.Count : -1) + " sendToMarkerSamples=" + sendToMarkerRecorder.sampleBlockCount + " sentMessages=" + (int)GetPrivateField(sync, "sentMessageCount"));
+            Assert.That(scanRecorder.Valid, Is.True);
+            Assert.That(snapshotRecorder.Valid, Is.True);
+            Assert.That(sendToRecorder.Valid, Is.True);
+            Assert.That(scanMarkerRecorder.sampleBlockCount, Is.GreaterThan(0));
+            Assert.That(snapshotMarkerRecorder.sampleBlockCount, Is.GreaterThan(0));
+            Assert.That(sendToMarkerRecorder.sampleBlockCount, Is.GreaterThan(0));
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+        }
+
+        [Test]
         public void ComputeBindingHierarchySignature_ReparentedExplicitBindingId_DoesNotChange()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -851,6 +962,73 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
             toggle.isOn = true;
             Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ScanBindings_Repeatedly_DoesNotDuplicateContinuousListenersOrTrackers()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sliderObject = DefaultControls.CreateSlider(new DefaultControls.Resources());
+            sliderObject.name = "MasterSlider";
+            sliderObject.transform.SetParent(canvasObject.transform, false);
+            var slider = sliderObject.GetComponent<Slider>();
+            var scrollbarObject = DefaultControls.CreateScrollbar(new DefaultControls.Resources());
+            scrollbarObject.name = "MasterScrollbar";
+            scrollbarObject.transform.SetParent(canvasObject.transform, false);
+            var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.minimumProposeIntervalSeconds = 0f;
+            profile.sliderEpsilon = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            for (var index = 0; index < 12; index++)
+            {
+                InvokePrivate(sync, "ScanBindings");
+                InvokePrivate(sync, "InitializeLocalState");
+            }
+
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            slider.value = 0.35f;
+            scrollbar.value = 0.45f;
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(2));
+            Assert.That(CountContinuousInteractionTrackers(sliderObject), Is.EqualTo(1));
+            Assert.That(CountContinuousInteractionTrackers(scrollbarObject), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ScanBindings_DuringContinuousInteraction_CancelsDeferredCommitWithoutBroadcasting()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sliderObject = new GameObject("MasterSlider", typeof(RectTransform), typeof(Slider));
+            sliderObject.transform.SetParent(canvasObject.transform, false);
+            var slider = sliderObject.GetComponent<Slider>();
+            slider.value = 0.25f;
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings")).Values.Cast<object>().Single();
+            var syncId = (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
+            binding.GetType().GetProperty("IsInteracting").SetValue(binding, true);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Slider", 0.9f, 100L, "PeerB", 1);
+            Assert.That(((IDictionary)GetPrivateField(sync, "deferredCommits")).Contains(syncId), Is.True);
+
+            sync.GetType().GetField("sentMessageCount", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(sync, 0);
+            InvokePrivate(sync, "ScanBindings");
+            InvokePrivate(sync, "InitializeLocalState");
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+            Assert.That(slider.value, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(sync, "deferredCommits")).Contains(syncId), Is.False);
+            var refreshedBinding = ((IEnumerable)GetPrivateField(sync, "continuousBindings")).Cast<object>().Single();
+            Assert.That((bool)refreshedBinding.GetType().GetProperty("IsInteracting").GetValue(refreshedBinding), Is.False);
         }
 
         [Test]
@@ -1362,6 +1540,19 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         private static string GetBindingSyncId(object binding)
         {
             return (string)binding.GetType().GetProperty("SyncId").GetValue(binding);
+        }
+
+        private static int CountContinuousInteractionTrackers(GameObject target)
+        {
+            return target.GetComponents<Component>().Count(component => component.GetType().FullName == "Mizotake.UnityUiSync.CanvasUiSyncContinuousInteractionTracker");
+        }
+
+        private static UnityEngine.Profiling.Recorder StartMarkerRecorder(string markerName)
+        {
+            var recorder = UnityEngine.Profiling.Recorder.Get(markerName);
+            recorder.enabled = false;
+            recorder.enabled = true;
+            return recorder;
         }
 
         private static void AssertButtonTargetsLocalToggle(string canvasName)

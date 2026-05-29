@@ -46,7 +46,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalStateChanged(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool force)
         {
-            if (!owner.syncEnabled || owner.suppressionCount > 0)
+            if (!owner.CanProcessRuntimeEvents() || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -80,7 +80,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalButtonClicked(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding)
         {
-            if (!owner.syncEnabled || owner.suppressionCount > 0)
+            if (!owner.CanProcessRuntimeEvents() || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -116,7 +116,8 @@ namespace Mizotake.UnityUiSync
                 var eventCamera = owner.canvasComponent != null && owner.canvasComponent.renderMode != RenderMode.ScreenSpaceOverlay ? owner.canvasComponent.worldCamera : null;
                 foreach (var binding in owner.continuousBindings)
                 {
-                    if (binding.Component is not RectTransform rectTransform)
+                    var rectTransform = binding.Component != null ? binding.Component.transform as RectTransform : null;
+                    if (rectTransform == null)
                     {
                         continue;
                     }

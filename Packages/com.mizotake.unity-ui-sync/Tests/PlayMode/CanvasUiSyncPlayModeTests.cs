@@ -1082,6 +1082,43 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator RuntimeGeneratedSlider_DragInputDefersRemoteCommitUntilDragEnds()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureImmediateContinuousProfile(peerA.sync);
+            ConfigureImmediateContinuousProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeSlider = CreateRuntimeSlider(peerA.sync.transform, "RuntimeSlider");
+            var peerBRuntimeSlider = CreateRuntimeSlider(peerB.sync.transform, "RuntimeSlider");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider") && HasBinding(peerB.sync, "DemoCanvas/RuntimeSlider:Slider"), 60);
+
+            peerARuntimeSlider.value = 0.25f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.25f) < 0.0001f, 60);
+            var peerABinding = GetBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider");
+            var eventData = CreatePointerEventData(peerARuntimeSlider.gameObject);
+            ExecuteEvents.Execute<IBeginDragHandler>(peerARuntimeSlider.gameObject, eventData, ExecuteEvents.beginDragHandler);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.True);
+
+            peerBRuntimeSlider.value = 0.9f;
+            yield return WaitFrames(10);
+
+            Assert.That(peerARuntimeSlider.value, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.True);
+
+            ExecuteEvents.Execute<IEndDragHandler>(peerARuntimeSlider.gameObject, eventData, ExecuteEvents.endDragHandler);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.False);
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.25f) < 0.0001f && !((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), 60);
+
+            Assert.That(peerARuntimeSlider.value, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(peerBRuntimeSlider.value, Is.EqualTo(0.25f).Within(0.0001f));
+        }
+
+        [UnityTest]
         public IEnumerator RuntimeGeneratedScrollbar_SyncsAcrossPeers()
         {
             var ports = AllocatePortPair();
@@ -1098,6 +1135,161 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return WaitUntil(() => Mathf.Abs(peerBRuntimeScrollbar.value - 0.2f) < 0.0001f, 60);
 
             Assert.That(peerBRuntimeScrollbar.value, Is.EqualTo(0.2f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedScrollbar_DragInputDefersRemoteCommitUntilDragEnds()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureImmediateContinuousProfile(peerA.sync);
+            ConfigureImmediateContinuousProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeScrollbar = CreateRuntimeScrollbar(peerA.sync.transform, "RuntimeScrollbar");
+            var peerBRuntimeScrollbar = CreateRuntimeScrollbar(peerB.sync.transform, "RuntimeScrollbar");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeScrollbar:Scrollbar") && HasBinding(peerB.sync, "DemoCanvas/RuntimeScrollbar:Scrollbar"), 60);
+
+            peerARuntimeScrollbar.value = 0.25f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeScrollbar.value - 0.25f) < 0.0001f, 60);
+            var peerABinding = GetBinding(peerA.sync, "DemoCanvas/RuntimeScrollbar:Scrollbar");
+            var eventData = CreatePointerEventData(peerARuntimeScrollbar.gameObject);
+            ExecuteEvents.Execute<IBeginDragHandler>(peerARuntimeScrollbar.gameObject, eventData, ExecuteEvents.beginDragHandler);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.True);
+
+            peerBRuntimeScrollbar.value = 0.9f;
+            yield return WaitFrames(10);
+
+            Assert.That(peerARuntimeScrollbar.value, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeScrollbar:Scrollbar"), Is.True);
+
+            ExecuteEvents.Execute<IEndDragHandler>(peerARuntimeScrollbar.gameObject, eventData, ExecuteEvents.endDragHandler);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.False);
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeScrollbar.value - 0.25f) < 0.0001f && !((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeScrollbar:Scrollbar"), 60);
+
+            Assert.That(peerARuntimeScrollbar.value, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(peerBRuntimeScrollbar.value, Is.EqualTo(0.25f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedSlider_DragInputCancelsDeferredWhenMonoBehaviourDisablesAndReenables()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureImmediateContinuousProfile(peerA.sync);
+            ConfigureImmediateContinuousProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeSlider = CreateRuntimeSlider(peerA.sync.transform, "RuntimeSlider");
+            var peerBRuntimeSlider = CreateRuntimeSlider(peerB.sync.transform, "RuntimeSlider");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider") && HasBinding(peerB.sync, "DemoCanvas/RuntimeSlider:Slider"), 60);
+
+            peerARuntimeSlider.value = 0.25f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.25f) < 0.0001f, 60);
+            var peerABinding = GetBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider");
+            var eventData = CreatePointerEventData(peerARuntimeSlider.gameObject);
+            ExecuteEvents.Execute<IBeginDragHandler>(peerARuntimeSlider.gameObject, eventData, ExecuteEvents.beginDragHandler);
+            peerBRuntimeSlider.value = 0.9f;
+            yield return WaitFrames(10);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.True);
+
+            peerA.sync.enabled = false;
+            yield return WaitFrames(3);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.False);
+            ExecuteEvents.Execute<IEndDragHandler>(peerARuntimeSlider.gameObject, eventData, ExecuteEvents.endDragHandler);
+            yield return WaitFrames(3);
+
+            peerA.sync.enabled = true;
+            yield return WaitFrames(3);
+            peerARuntimeSlider.value = 0.4f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.4f) < 0.0001f, 60);
+
+            Assert.That(peerARuntimeSlider.value, Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(peerBRuntimeSlider.value, Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator RuntimeGeneratedSlider_DragInputCancelsDeferredWhenGameObjectDisablesAndReenables()
+        {
+            EnsureEventSystemExists();
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            ConfigureImmediateContinuousProfile(peerA.sync);
+            ConfigureImmediateContinuousProfile(peerB.sync);
+            yield return null;
+            yield return null;
+
+            var peerARuntimeSlider = CreateRuntimeSlider(peerA.sync.transform, "RuntimeSlider");
+            var peerBRuntimeSlider = CreateRuntimeSlider(peerB.sync.transform, "RuntimeSlider");
+            yield return WaitUntil(() => HasBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider") && HasBinding(peerB.sync, "DemoCanvas/RuntimeSlider:Slider"), 60);
+
+            peerARuntimeSlider.value = 0.25f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.25f) < 0.0001f, 60);
+            var peerABinding = GetBinding(peerA.sync, "DemoCanvas/RuntimeSlider:Slider");
+            var eventData = CreatePointerEventData(peerARuntimeSlider.gameObject);
+            ExecuteEvents.Execute<IBeginDragHandler>(peerARuntimeSlider.gameObject, eventData, ExecuteEvents.beginDragHandler);
+            peerBRuntimeSlider.value = 0.9f;
+            yield return WaitFrames(10);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.True);
+
+            peerA.sync.gameObject.SetActive(false);
+            yield return WaitFrames(3);
+            Assert.That((bool)GetPublicProperty(peerABinding, "IsInteracting"), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.False);
+
+            peerA.sync.gameObject.SetActive(true);
+            yield return WaitFrames(3);
+            peerARuntimeSlider.value = 0.4f;
+            yield return WaitUntil(() => Mathf.Abs(peerBRuntimeSlider.value - 0.4f) < 0.0001f, 60);
+
+            Assert.That(peerARuntimeSlider.value, Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(peerBRuntimeSlider.value, Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(((IDictionary)GetPrivateField(peerA.sync, "deferredCommits")).Contains("DemoCanvas/RuntimeSlider:Slider"), Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator DisabledMonoBehaviour_StopsLocalAndRemoteSyncThenReenables()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            peerA.sync.enabled = false;
+            yield return WaitFrames(3);
+
+            peerB.toggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerA.toggle.isOn, Is.False);
+
+            ResetMessageCounters(peerA.sync);
+            peerA.toggle.isOn = true;
+            yield return WaitFrames(5);
+            Assert.That(GetSentMessageCount(peerA.sync), Is.EqualTo(0));
+
+            peerA.sync.enabled = true;
+            peerB.toggle.isOn = false;
+            yield return WaitUntil(() => !peerA.toggle.isOn, 60);
+
+            Assert.That(peerA.toggle.isOn, Is.False);
+            Assert.That(peerB.toggle.isOn, Is.False);
+
+            peerA.toggle.isOn = true;
+            yield return WaitUntil(() => peerB.toggle.isOn, 60);
+
+            Assert.That(peerB.toggle.isOn, Is.True);
         }
 
         [UnityTest]
@@ -1466,6 +1658,13 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             profile.snapshotRetryCooldownSeconds = 10f;
         }
 
+        private static void ConfigureImmediateContinuousProfile(CanvasUiSync sync)
+        {
+            var profile = GetProfile(sync);
+            profile.minimumProposeIntervalSeconds = 0f;
+            profile.sliderEpsilon = 0f;
+        }
+
         private static SharedRuntimeControls CreateSharedRuntimeControls(CanvasUiSync peerASync, CanvasUiSync peerBSync)
         {
             var peerAContainer = CreateRuntimeContainer(peerASync.transform, "OperationsPanel");
@@ -1750,6 +1949,13 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(eventSystem, Is.Not.Null);
             var eventData = new PointerEventData(eventSystem) { button = PointerEventData.InputButton.Left };
             ExecuteEvents.Execute<IPointerClickHandler>(dropdown.gameObject, eventData, ExecuteEvents.pointerClickHandler);
+        }
+
+        private static PointerEventData CreatePointerEventData(GameObject target)
+        {
+            var eventSystem = Object.FindObjectOfType<EventSystem>();
+            Assert.That(eventSystem, Is.Not.Null);
+            return new PointerEventData(eventSystem) { button = PointerEventData.InputButton.Left, pointerPress = target, pointerDrag = target };
         }
 
         private static void ClickDropdownBlocker(Dropdown dropdown)

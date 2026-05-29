@@ -2,11 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
+using Unity.Profiling;
 
 namespace Mizotake.UnityUiSync
 {
     internal static class CanvasUiSyncTransportService
     {
+        internal const string SendSnapshotMarkerName = "CanvasUiSync.SendSnapshot";
+        internal const string BroadcastCommitMarkerName = "CanvasUiSync.BroadcastCommit";
+        internal const string SendToMarkerName = "CanvasUiSync.SendTo";
+        private static readonly ProfilerMarker SendSnapshotMarker = new ProfilerMarker(SendSnapshotMarkerName);
+        private static readonly ProfilerMarker BroadcastCommitMarker = new ProfilerMarker(BroadcastCommitMarkerName);
+        private static readonly ProfilerMarker SendToMarker = new ProfilerMarker(SendToMarkerName);
+
         internal static void InitializeTransport(CanvasUiSync owner)
         {
             owner.server = owner.GetComponent<uOSC.uOscServer>();
@@ -33,8 +41,7 @@ namespace Mizotake.UnityUiSync
 
             owner.server.port = owner.profile.listenPort;
             owner.server.autoStart = true;
-            owner.server.onDataReceived.RemoveListener(owner.OnOscMessageReceived);
-            owner.server.onDataReceived.AddListener(owner.OnOscMessageReceived);
+            owner.SubscribeTransportListener();
             owner.client.address = "127.0.0.1";
             owner.client.port = owner.profile.listenPort;
             if (configuredTransportHost != null)
@@ -66,7 +73,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void TickSnapshotRetry(CanvasUiSync owner, float now)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
@@ -79,7 +86,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void RequestSnapshotIfNeeded(CanvasUiSync owner, bool force)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
@@ -152,7 +159,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void TickPeriodicResync(CanvasUiSync owner, float now)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
@@ -216,7 +223,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendHello(CanvasUiSync owner)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
@@ -312,29 +319,32 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendSnapshotCore(CanvasUiSync owner, Action<object[]> sendBegin, Action<object[]> sendState, Action<object[]> sendEnd)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
 
-            var snapshotId = Guid.NewGuid().ToString("N");
-            sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
-            foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
+            using (SendSnapshotMarker.Auto())
             {
-                sendState(values);
-            }
+                var snapshotId = Guid.NewGuid().ToString("N");
+                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+                foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
+                {
+                    sendState(values);
+                }
 
-            sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
-            if (owner.ShouldDebugLog())
-            {
-                var builder = owner.stringBuilderScratch;
-                builder.Length = 0;
-                builder.Append("CanvasUiSync snapshot served: ");
-                builder.Append(owner.canvasId);
-                builder.Append(" snapshotId=");
-                builder.Append(snapshotId);
-                Debug.Log(builder.ToString(), owner);
-                builder.Length = 0;
+                sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+                if (owner.ShouldDebugLog())
+                {
+                    var builder = owner.stringBuilderScratch;
+                    builder.Length = 0;
+                    builder.Append("CanvasUiSync snapshot served: ");
+                    builder.Append(owner.canvasId);
+                    builder.Append(" snapshotId=");
+                    builder.Append(snapshotId);
+                    Debug.Log(builder.ToString(), owner);
+                    builder.Length = 0;
+                }
             }
         }
 
@@ -351,29 +361,32 @@ namespace Mizotake.UnityUiSync
 
         internal static void BroadcastCommit(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
 
-            if (owner.profile.peerEndpoints == null)
+            using (BroadcastCommitMarker.Auto())
             {
-                return;
-            }
-
-            for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
-            {
-                var endpoint = owner.profile.peerEndpoints[index];
-                if (IsPeerTargetActive(owner, endpoint))
+                if (owner.profile.peerEndpoints == null)
                 {
-                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitStateAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, valueType, owner.SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                    return;
+                }
+
+                for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
+                {
+                    var endpoint = owner.profile.peerEndpoints[index];
+                    if (IsPeerTargetActive(owner, endpoint))
+                    {
+                        owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.CommitStateAddress, owner.profile.nodeId, owner.sessionId, owner.canvasId, syncId, valueType, owner.SerializeValue(value, valueType), SerializeLogicalTicks(stamp.LogicalTicks), stamp.NodeId, stamp.Sequence);
+                    }
                 }
             }
         }
 
         internal static void BroadcastButton(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp)
         {
-            if (!owner.syncEnabled)
+            if (!owner.CanProcessRuntimeEvents())
             {
                 return;
             }
@@ -418,16 +431,19 @@ namespace Mizotake.UnityUiSync
 
         internal static void SendTo(CanvasUiSync owner, string ipAddress, int port, string address, params object[] values)
         {
-            if (owner.client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
+            if (owner.CanProcessRuntimeEvents() && owner.client != null && !string.IsNullOrWhiteSpace(ipAddress) && port > 0)
             {
-                owner.client.address = ipAddress;
-                owner.client.port = port;
-                owner.client.Send(address, values);
-                owner.sentMessageCount++;
-                if (owner.ShouldStatisticsLog())
+                using (SendToMarker.Auto())
                 {
-                    owner.sentValueCount += values.Length;
-                    owner.sentApproxBytes += EstimatePayloadBytes(address, values);
+                    owner.client.address = ipAddress;
+                    owner.client.port = port;
+                    owner.client.Send(address, values);
+                    owner.sentMessageCount++;
+                    if (owner.ShouldStatisticsLog())
+                    {
+                        owner.sentValueCount += values.Length;
+                        owner.sentApproxBytes += EstimatePayloadBytes(address, values);
+                    }
                 }
             }
         }

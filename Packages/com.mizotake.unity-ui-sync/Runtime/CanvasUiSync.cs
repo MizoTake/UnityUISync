@@ -94,6 +94,7 @@ namespace Mizotake.UnityUiSync
         internal int bindingHierarchySignature;
         internal bool initialized;
         internal bool hasSnapshot;
+        internal bool transportListenerSubscribed;
         internal uOscServer server;
         internal uOscClient client;
         internal Canvas canvasComponent;
@@ -283,11 +284,7 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            nextHelloTime = Time.unscaledTime;
-            nextSnapshotRequestTime = Time.unscaledTime;
-            nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
-            nextStatisticsLogTime = ShouldStatisticsLog() ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
-            ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
+            ScheduleSynchronizationNow(Time.unscaledTime);
             lastGcCollectionCount0 = GC.CollectionCount(0);
             lastGcCollectionCount1 = GC.CollectionCount(1);
             lastGcCollectionCount2 = GC.CollectionCount(2);
@@ -296,13 +293,30 @@ namespace Mizotake.UnityUiSync
 
         private void OnEnable()
         {
-            if (initialized && rescanOnEnable)
+            if (!initialized)
+            {
+                return;
+            }
+
+            SubscribeTransportListener();
+            if (rescanOnEnable)
             {
                 ScanBindings();
                 InitializeLocalState();
                 bindingHierarchySignature = ComputeBindingHierarchySignature();
                 ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             }
+        }
+
+        private void OnDisable()
+        {
+            if (!initialized)
+            {
+                return;
+            }
+
+            UnsubscribeTransportListener();
+            ClearContinuousInteractionStates();
         }
 
         public void SetSyncEnabled(bool value)
@@ -320,6 +334,7 @@ namespace Mizotake.UnityUiSync
 
             if (!syncEnabled)
             {
+                ClearContinuousInteractionStates();
                 return;
             }
 
@@ -327,11 +342,7 @@ namespace Mizotake.UnityUiSync
             hasSnapshot = false;
             snapshotRetryCount = 0;
             snapshotCooldownUntil = 0f;
-            nextHelloTime = Time.unscaledTime;
-            nextSnapshotRequestTime = Time.unscaledTime;
-            nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? Time.unscaledTime + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
-            nextStatisticsLogTime = ShouldStatisticsLog() ? Time.unscaledTime + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
-            ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
+            ScheduleSynchronizationNow(Time.unscaledTime);
             SendHello();
             RequestSnapshotIfNeeded(true);
         }
@@ -373,14 +384,62 @@ namespace Mizotake.UnityUiSync
 
         private void OnDestroy()
         {
+            UnsubscribeTransportListener();
+
+            foreach (var binding in bindings.Values)
+            {
+                binding.Dispose();
+            }
+        }
+
+        internal bool CanProcessRuntimeEvents()
+        {
+            return initialized && syncEnabled && isActiveAndEnabled;
+        }
+
+        internal void SubscribeTransportListener()
+        {
+            if (server == null)
+            {
+                transportListenerSubscribed = false;
+                return;
+            }
+
+            server.onDataReceived.RemoveListener(OnOscMessageReceived);
+            server.onDataReceived.AddListener(OnOscMessageReceived);
+            transportListenerSubscribed = true;
+        }
+
+        internal void UnsubscribeTransportListener()
+        {
             if (server != null)
             {
                 server.onDataReceived.RemoveListener(OnOscMessageReceived);
             }
 
-            foreach (var binding in bindings.Values)
+            transportListenerSubscribed = false;
+        }
+
+        internal void ScheduleSynchronizationNow(float now)
+        {
+            nextHelloTime = now;
+            nextSnapshotRequestTime = now;
+            nextPeriodicResyncTime = profile.periodicFullResyncIntervalSeconds > 0f ? now + profile.periodicFullResyncIntervalSeconds : float.PositiveInfinity;
+            nextStatisticsLogTime = ShouldStatisticsLog() ? now + profile.statisticsLogIntervalSeconds : float.PositiveInfinity;
+            ResetRuntimeHierarchyRescanSchedule(now);
+        }
+
+        internal void ClearContinuousInteractionStates()
+        {
+            for (var index = 0; index < continuousBindings.Count; index++)
             {
-                binding.Dispose();
+                var binding = continuousBindings[index];
+                binding.IsInteracting = false;
+                deferredCommits.Remove(binding.SyncId);
+                if (binding.Component != null && binding.Component.TryGetComponent<CanvasUiSyncContinuousInteractionTracker>(out var tracker))
+                {
+                    tracker.Cancel(this, binding);
+                }
             }
         }
 

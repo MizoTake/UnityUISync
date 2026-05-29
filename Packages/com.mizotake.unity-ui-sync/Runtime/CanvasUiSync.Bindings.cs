@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TMPro;
 using UnityEngine;
+using Unity.Profiling;
 using UnityEngine.UI;
 
 namespace Mizotake.UnityUiSync
@@ -12,6 +13,10 @@ namespace Mizotake.UnityUiSync
     {
         private const string DropdownListObjectName = "Dropdown List";
         private const string DropdownBlockerObjectName = "Blocker";
+        internal const string ScanBindingsMarkerName = "CanvasUiSync.ScanBindings";
+        internal const string ComputeBindingHierarchySignatureMarkerName = "CanvasUiSync.ComputeBindingHierarchySignature";
+        private static readonly ProfilerMarker ScanBindingsMarker = new ProfilerMarker(ScanBindingsMarkerName);
+        private static readonly ProfilerMarker ComputeBindingHierarchySignatureMarker = new ProfilerMarker(ComputeBindingHierarchySignatureMarkerName);
         internal sealed class BindingScanContext
         {
             private CanvasUiSync owner;
@@ -142,26 +147,29 @@ namespace Mizotake.UnityUiSync
 
         internal static void ScanBindings(CanvasUiSync owner)
         {
-            foreach (var binding in owner.bindings.Values)
+            using (ScanBindingsMarker.Auto())
             {
-                binding.Dispose();
-            }
+                foreach (var binding in owner.bindings.Values)
+                {
+                    binding.Dispose();
+                }
 
-            owner.bindings.Clear();
-            owner.continuousBindings.Clear();
-            owner.polledBindings.Clear();
-            owner.dropdownRuntimeRootCache.Clear();
-            owner.tmpDropdownRuntimeRootCache.Clear();
-            var context = PrepareBindingScanContext(owner);
-            RegisterToggles(owner, context);
-            RegisterSliders(owner, context);
-            RegisterScrollbars(owner, context);
-            RegisterDropdowns(owner, context);
-            RegisterTmpDropdowns(owner, context);
-            RegisterInputFields(owner, context);
-            RegisterTmpInputFields(owner, context);
-            RegisterButtons(owner, context);
-            owner.registryHash = ComputeRegistryHash(owner);
+                owner.bindings.Clear();
+                owner.continuousBindings.Clear();
+                owner.polledBindings.Clear();
+                owner.dropdownRuntimeRootCache.Clear();
+                owner.tmpDropdownRuntimeRootCache.Clear();
+                var context = PrepareBindingScanContext(owner);
+                RegisterToggles(owner, context);
+                RegisterSliders(owner, context);
+                RegisterScrollbars(owner, context);
+                RegisterDropdowns(owner, context);
+                RegisterTmpDropdowns(owner, context);
+                RegisterInputFields(owner, context);
+                RegisterTmpInputFields(owner, context);
+                RegisterButtons(owner, context);
+                owner.registryHash = ComputeRegistryHash(owner);
+            }
         }
 
         private static BindingScanContext PrepareBindingScanContext(CanvasUiSync owner)
@@ -212,7 +220,9 @@ namespace Mizotake.UnityUiSync
 
                 var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Slider"), "Slider", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
                 UnityEngine.Events.UnityAction<float> listener = value => owner.OnLocalStateChanged(binding, value, false);
-                binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
+                var tracker = CanvasUiSyncContinuousInteractionTracker.GetOrAdd(component.gameObject);
+                tracker.Configure(owner, binding);
+                binding.Unsubscribe = () => { component.onValueChanged.RemoveListener(listener); owner.deferredCommits.Remove(binding.SyncId); tracker.Clear(owner, binding); };
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
             }
@@ -236,7 +246,9 @@ namespace Mizotake.UnityUiSync
 
                 var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Scrollbar"), "Scrollbar", () => component.value, value => component.SetValueWithoutNotify(Convert.ToSingle(value)), true);
                 UnityEngine.Events.UnityAction<float> listener = value => owner.OnLocalStateChanged(binding, value, false);
-                binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
+                var tracker = CanvasUiSyncContinuousInteractionTracker.GetOrAdd(component.gameObject);
+                tracker.Configure(owner, binding);
+                binding.Unsubscribe = () => { component.onValueChanged.RemoveListener(listener); owner.deferredCommits.Remove(binding.SyncId); tracker.Clear(owner, binding); };
                 component.onValueChanged.AddListener(listener);
                 owner.RegisterBinding(binding);
             }
@@ -694,27 +706,30 @@ namespace Mizotake.UnityUiSync
 
         internal static int ComputeBindingHierarchySignature(CanvasUiSync owner)
         {
-            unchecked
+            using (ComputeBindingHierarchySignatureMarker.Auto())
             {
-                var context = PrepareBindingScanContext(owner);
-                var hash = 17;
-                CollectComponentsInChildren(owner, owner.toggleScratch);
-                CollectComponentsInChildren(owner, owner.sliderScratch);
-                CollectComponentsInChildren(owner, owner.scrollbarScratch);
-                CollectComponentsInChildren(owner, owner.inputFieldScratch);
-                CollectComponentsInChildren(owner, owner.tmpInputFieldScratch);
-                CollectComponentsInChildren(owner, owner.buttonScratch);
-                AppendBindingHierarchySignature(owner, ref hash, owner.toggleScratch, "Toggle", context);
-                AppendBindingHierarchySignature(owner, ref hash, owner.sliderScratch, "Slider", context);
-                AppendBindingHierarchySignature(owner, ref hash, owner.scrollbarScratch, "Scrollbar", context);
-                AppendBindingHierarchySignature(owner, ref hash, context.Dropdowns, "Dropdown", context);
-                AppendDropdownItemToggleBindingSignatures(owner, ref hash, context);
-                AppendBindingHierarchySignature(owner, ref hash, context.TmpDropdowns, "TMP_Dropdown", context);
-                AppendTmpDropdownItemToggleBindingSignatures(owner, ref hash, context);
-                AppendBindingHierarchySignature(owner, ref hash, owner.inputFieldScratch, "InputField", context);
-                AppendBindingHierarchySignature(owner, ref hash, owner.tmpInputFieldScratch, "TMP_InputField", context);
-                AppendBindingHierarchySignature(owner, ref hash, owner.buttonScratch, "Button", context);
-                return hash;
+                unchecked
+                {
+                    var context = PrepareBindingScanContext(owner);
+                    var hash = 17;
+                    CollectComponentsInChildren(owner, owner.toggleScratch);
+                    CollectComponentsInChildren(owner, owner.sliderScratch);
+                    CollectComponentsInChildren(owner, owner.scrollbarScratch);
+                    CollectComponentsInChildren(owner, owner.inputFieldScratch);
+                    CollectComponentsInChildren(owner, owner.tmpInputFieldScratch);
+                    CollectComponentsInChildren(owner, owner.buttonScratch);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.toggleScratch, "Toggle", context);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.sliderScratch, "Slider", context);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.scrollbarScratch, "Scrollbar", context);
+                    AppendBindingHierarchySignature(owner, ref hash, context.Dropdowns, "Dropdown", context);
+                    AppendDropdownItemToggleBindingSignatures(owner, ref hash, context);
+                    AppendBindingHierarchySignature(owner, ref hash, context.TmpDropdowns, "TMP_Dropdown", context);
+                    AppendTmpDropdownItemToggleBindingSignatures(owner, ref hash, context);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.inputFieldScratch, "InputField", context);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.tmpInputFieldScratch, "TMP_InputField", context);
+                    AppendBindingHierarchySignature(owner, ref hash, owner.buttonScratch, "Button", context);
+                    return hash;
+                }
             }
         }
 

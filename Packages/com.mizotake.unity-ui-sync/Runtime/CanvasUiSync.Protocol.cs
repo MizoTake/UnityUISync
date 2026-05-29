@@ -14,7 +14,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleReceivedPayload(CanvasUiSync owner, string address, object[] values)
         {
-            if (!owner.syncEnabled || values == null)
+            if (!owner.CanProcessRuntimeEvents() || values == null)
             {
                 return;
             }
