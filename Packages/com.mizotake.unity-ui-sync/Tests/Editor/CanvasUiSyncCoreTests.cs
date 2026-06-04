@@ -251,6 +251,36 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleCommitState_RemoteToggleValue_InvokesReceiverOnValueChanged()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var invocationCount = 0;
+            var receivedValue = false;
+            toggle.onValueChanged.AddListener(value =>
+            {
+                invocationCount++;
+                receivedValue = value;
+            });
+
+            var syncId = (string)InvokePrivate(sync, "BuildSyncId", toggleObject.transform, "Toggle");
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Toggle", true, 100L, "PeerB", 1);
+
+            Assert.That(toggle.isOn, Is.True);
+            Assert.That(invocationCount, Is.EqualTo(1));
+            Assert.That(receivedValue, Is.True);
+        }
+
+        [Test]
         public void HandleCommitState_AfterRuntimeGeneratedDropdown_RescansAndAppliesRemoteState()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));

@@ -381,6 +381,31 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator Toggle_RemoteSync_InvokesReceiverOnValueChangedListener()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            var listenerInvoked = false;
+            var receivedValue = false;
+            peerB.toggle.onValueChanged.AddListener(value =>
+            {
+                listenerInvoked = true;
+                receivedValue = value;
+            });
+
+            peerA.toggle.isOn = true;
+            yield return WaitUntil(() => peerB.toggle.isOn && listenerInvoked, 60);
+
+            Assert.That(peerB.toggle.isOn, Is.True);
+            Assert.That(listenerInvoked, Is.True);
+            Assert.That(receivedValue, Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator Toggle_RepeatedBidirectionalSync_RemainsConsistentOverManyFrames()
         {
             var ports = AllocatePortPair();
