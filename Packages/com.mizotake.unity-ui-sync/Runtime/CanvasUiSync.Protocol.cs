@@ -7,6 +7,8 @@ namespace Mizotake.UnityUiSync
 {
     internal static class CanvasUiSyncProtocolService
     {
+        private const float SessionUptimeComparisonToleranceSeconds = 0.25f;
+
         internal static void OnOscMessageReceived(CanvasUiSync owner, Message message)
         {
             owner.HandleReceivedPayload(message.address, message.values);
@@ -82,6 +84,7 @@ namespace Mizotake.UnityUiSync
             var protocolVersion = Convert.ToInt32(values[1]);
             var incomingSessionId = ReadString(values, 3);
             var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
+            var incomingSessionUptimeSeconds = ReadOptionalSingle(values, 5, -1f);
             if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
@@ -98,7 +101,8 @@ namespace Mizotake.UnityUiSync
                 {
                     node.SessionId = incomingSessionId;
                     node.SessionStartedAtTicks = incomingSessionStartedAtTicks;
-                    SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks);
+                    node.SessionUptimeSeconds = incomingSessionUptimeSeconds;
+                    SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
                 }
 
                 node.LastSeenAt = Time.unscaledTime;
@@ -106,15 +110,20 @@ namespace Mizotake.UnityUiSync
                 {
                     node.SessionStartedAtTicks = incomingSessionStartedAtTicks;
                 }
+
+                if (incomingSessionUptimeSeconds >= 0f)
+                {
+                    node.SessionUptimeSeconds = incomingSessionUptimeSeconds;
+                }
             }
             else
             {
-                owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime, incomingSessionStartedAtTicks);
+                owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
                 if (owner.ShouldDebugLog())
                 {
                     LogPeerJoin(owner, nodeId);
                 }
-                SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks);
+                SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
             }
         }
 
@@ -178,8 +187,33 @@ namespace Mizotake.UnityUiSync
             var snapshotId = ReadString(values, 0);
             var incomingSessionId = ReadString(values, 3);
             var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
+            var expectedStateCount = ReadOptionalInt32(values, 5, -1);
+            var incomingSessionUptimeSeconds = ReadOptionalSingle(values, 6, -1f);
+            var incomingSnapshotSequence = ReadOptionalInt32(values, 7, -1);
+            var sourceCanInitializeLocalState = CanSnapshotInitializeLocalState(owner, nodeId, incomingSessionId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
+            var acceptRequestedSnapshot = owner.CanAcceptRequestedSnapshotFromNewerPeer();
+            if (!sourceCanInitializeLocalState && !acceptRequestedSnapshot)
+            {
+                return;
+            }
+
+            var sourceSessionKey = nodeId + "\n" + incomingSessionId;
+            if (incomingSnapshotSequence >= 0 && owner.latestSnapshotSequenceBySourceSession.TryGetValue(sourceSessionKey, out var latestSnapshotSequence) && incomingSnapshotSequence <= latestSnapshotSequence)
+            {
+                return;
+            }
+
+            if (incomingSnapshotSequence >= 0)
+            {
+                owner.latestSnapshotSequenceBySourceSession[sourceSessionKey] = incomingSnapshotSequence;
+            }
+
+            var canInitializeLocalState = sourceCanInitializeLocalState || acceptRequestedSnapshot;
+            ResetActiveSnapshotReception(owner);
             owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
-            owner.activeSnapshotCanInitializeLocalState[snapshotId] = CanSnapshotInitializeLocalState(owner, nodeId, incomingSessionId, incomingSessionStartedAtTicks);
+            owner.activeSnapshotCanInitializeLocalState[snapshotId] = canInitializeLocalState;
+            owner.snapshotReceiveStates[snapshotId] = new CanvasUiSync.SnapshotReceiveState(nodeId, incomingSessionId, canInitializeLocalState, expectedStateCount);
+            owner.hasSnapshot = false;
             if (owner.ShouldDebugLog())
             {
                 LogSnapshotBegin(owner, snapshotId);
@@ -200,7 +234,7 @@ namespace Mizotake.UnityUiSync
 
             var snapshotId = ReadString(values, 0);
             var incomingCanvasId = ReadString(values, 1);
-            if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
+            if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
@@ -212,8 +246,15 @@ namespace Mizotake.UnityUiSync
 
             var syncId = ReadString(values, 2);
             var valueType = ReadString(values, 3);
-            var canInitializeLocalState = owner.activeSnapshotCanInitializeLocalState.TryGetValue(snapshotId, out var canInitialize) && canInitialize;
-            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true, canInitializeLocalState);
+            snapshotState.ReceivedSyncIds.Add(syncId);
+            snapshotState.PendingSyncIds.Add(syncId);
+            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true, snapshotState.CanInitializeLocalState);
+            if (owner.bindings.TryGetValue(syncId, out var binding) && string.Equals(binding.ValueType, valueType, StringComparison.Ordinal))
+            {
+                snapshotState.PendingSyncIds.Remove(syncId);
+            }
+
+            TryCompleteSnapshot(owner, snapshotId);
         }
 
         internal static void HandleEndSnapshot(CanvasUiSync owner, object[] values)
@@ -228,26 +269,29 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (owner.ShouldIgnoreIncomingPeer(ReadString(values, 2)))
+            var incomingCanvasId = ReadString(values, 1);
+            if (!string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var nodeId = ReadString(values, 2);
+            if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
             }
 
             var snapshotId = ReadString(values, 0);
-            var incomingCanvasId = ReadString(values, 1);
-            var hadSnapshot = owner.activeSnapshotIds.Remove(snapshotId);
-            owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
-            if (!hadSnapshot || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
+            var incomingSessionId = ReadString(values, 3);
+            if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) || !string.Equals(snapshotState.SourceNodeId, nodeId, StringComparison.Ordinal) || !string.Equals(snapshotState.SourceSessionId, incomingSessionId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            owner.hasSnapshot = true;
-            owner.snapshotRetryCount = 0;
-            if (owner.ShouldDebugLog())
-            {
-                LogSnapshotEnd(owner);
-            }
+            snapshotState.EndReceived = true;
+            snapshotState.CompletionDeadline = Time.unscaledTime + Mathf.Max(0f, owner.profile.initialSyncPendingTimeoutSeconds);
+            owner.activeSnapshotIds[snapshotId] = snapshotState.CompletionDeadline;
+            TryCompleteSnapshot(owner, snapshotId);
         }
 
         internal static void HandleCommitState(CanvasUiSync owner, object[] values)
@@ -484,14 +528,147 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static void SynchronizeWithHelloPeer(CanvasUiSync owner, string nodeId, long incomingSessionStartedAtTicks)
+        internal static void HandlePendingSnapshotStateApplied(CanvasUiSync owner, string syncId)
         {
-            if (incomingSessionStartedAtTicks > 0L && owner.sessionStartedAtTicks > 0L && incomingSessionStartedAtTicks >= owner.sessionStartedAtTicks)
+            if (owner.snapshotReceiveStates.Count == 0)
+            {
+                return;
+            }
+
+            owner.snapshotIdScratch.Clear();
+            foreach (var pair in owner.snapshotReceiveStates)
+            {
+                if (pair.Value.PendingSyncIds.Remove(syncId) && pair.Value.IsReady)
+                {
+                    owner.snapshotIdScratch.Add(pair.Key);
+                }
+            }
+
+            for (var index = 0; index < owner.snapshotIdScratch.Count; index++)
+            {
+                CompleteSnapshot(owner, owner.snapshotIdScratch[index]);
+            }
+
+            owner.snapshotIdScratch.Clear();
+        }
+
+        internal static void HandleSnapshotTimeout(CanvasUiSync owner, string snapshotId)
+        {
+            if (!owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState))
+            {
+                owner.activeSnapshotIds.Remove(snapshotId);
+                owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
+                return;
+            }
+
+            foreach (var syncId in snapshotState.PendingSyncIds)
+            {
+                if (owner.pendingRemoteCommits.TryGetValue(syncId, out var pending) && pending.IsSnapshot && !IsPendingInAnotherSnapshot(owner, snapshotId, syncId))
+                {
+                    owner.pendingRemoteCommits.Remove(syncId);
+                }
+            }
+
+            owner.snapshotReceiveStates.Remove(snapshotId);
+            owner.activeSnapshotIds.Remove(snapshotId);
+            owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
+            owner.hasSnapshot = false;
+
+            if (owner.ShouldDebugLog())
+            {
+                var builder = owner.stringBuilderScratch;
+                builder.Length = 0;
+                builder.Append("CanvasUiSync initial snapshot wait timed out: ");
+                builder.Append(snapshotId);
+                builder.Append(" received=");
+                builder.Append(snapshotState.ReceivedSyncIds.Count);
+                builder.Append('/');
+                builder.Append(snapshotState.ExpectedStateCount);
+                builder.Append(" pendingUi=");
+                builder.Append(snapshotState.PendingSyncIds.Count);
+                Debug.LogWarning(builder.ToString(), owner);
+                builder.Length = 0;
+            }
+        }
+
+        private static void TryCompleteSnapshot(CanvasUiSync owner, string snapshotId)
+        {
+            if (owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) && snapshotState.IsReady)
+            {
+                CompleteSnapshot(owner, snapshotId);
+            }
+        }
+
+        private static void ResetActiveSnapshotReception(CanvasUiSync owner)
+        {
+            owner.snapshotIdScratch.Clear();
+            foreach (var pair in owner.pendingRemoteCommits)
+            {
+                if (pair.Value.IsSnapshot)
+                {
+                    owner.snapshotIdScratch.Add(pair.Key);
+                }
+            }
+
+            for (var index = 0; index < owner.snapshotIdScratch.Count; index++)
+            {
+                owner.pendingRemoteCommits.Remove(owner.snapshotIdScratch[index]);
+            }
+
+            owner.snapshotIdScratch.Clear();
+            owner.snapshotReceiveStates.Clear();
+            owner.activeSnapshotIds.Clear();
+            owner.activeSnapshotCanInitializeLocalState.Clear();
+        }
+
+        internal static void CancelActiveSnapshotReception(CanvasUiSync owner)
+        {
+            ResetActiveSnapshotReception(owner);
+            owner.ClearRequestedSnapshotFromNewerPeer();
+        }
+
+        private static void CompleteSnapshot(CanvasUiSync owner, string snapshotId)
+        {
+            owner.snapshotReceiveStates.Remove(snapshotId);
+            owner.activeSnapshotIds.Remove(snapshotId);
+            owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
+            owner.hasSnapshot = owner.snapshotReceiveStates.Count == 0;
+            if (owner.hasSnapshot)
+            {
+                owner.snapshotRetryCount = 0;
+                owner.ClearRequestedSnapshotFromNewerPeer();
+            }
+
+            if (owner.ShouldDebugLog())
+            {
+                LogSnapshotEnd(owner);
+            }
+        }
+
+        private static bool IsPendingInAnotherSnapshot(CanvasUiSync owner, string snapshotId, string syncId)
+        {
+            foreach (var pair in owner.snapshotReceiveStates)
+            {
+                if (!string.Equals(pair.Key, snapshotId, StringComparison.Ordinal) && pair.Value.PendingSyncIds.Contains(syncId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void SynchronizeWithHelloPeer(CanvasUiSync owner, string nodeId, long incomingSessionStartedAtTicks, float incomingSessionUptimeSeconds)
+        {
+            if (IsLocalSessionOlder(owner, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds))
             {
                 var endpoint = owner.FindPeerTarget(nodeId);
                 if (endpoint != null)
                 {
                     owner.SendSnapshot(endpoint.ipAddress, endpoint.port);
+                    owner.hasSnapshot = true;
+                    owner.snapshotRetryCount = 0;
+                    owner.ClearRequestedSnapshotFromNewerPeer();
                 }
 
                 return;
@@ -502,15 +679,44 @@ namespace Mizotake.UnityUiSync
             owner.RequestSnapshotIfNeeded(true);
         }
 
-        private static bool CanSnapshotInitializeLocalState(CanvasUiSync owner, string nodeId, string incomingSessionId, long incomingSessionStartedAtTicks)
+        private static bool CanSnapshotInitializeLocalState(CanvasUiSync owner, string nodeId, string incomingSessionId, long incomingSessionStartedAtTicks, float incomingSessionUptimeSeconds)
         {
             var sourceStartedAtTicks = incomingSessionStartedAtTicks;
+            var sourceUptimeSeconds = incomingSessionUptimeSeconds;
             if (sourceStartedAtTicks <= 0L && owner.nodes.TryGetValue(nodeId, out var node) && string.Equals(node.SessionId, incomingSessionId, StringComparison.Ordinal))
             {
                 sourceStartedAtTicks = node.SessionStartedAtTicks;
             }
 
+            if (sourceUptimeSeconds < 0f && owner.nodes.TryGetValue(nodeId, out var uptimeNode) && string.Equals(uptimeNode.SessionId, incomingSessionId, StringComparison.Ordinal))
+            {
+                sourceUptimeSeconds = uptimeNode.SessionUptimeSeconds;
+            }
+
+            if (sourceUptimeSeconds >= 0f)
+            {
+                var localUptimeSeconds = owner.GetSessionUptimeSeconds();
+                if (Mathf.Abs(sourceUptimeSeconds - localUptimeSeconds) > SessionUptimeComparisonToleranceSeconds)
+                {
+                    return sourceUptimeSeconds > localUptimeSeconds;
+                }
+            }
+
             return sourceStartedAtTicks > 0L && owner.sessionStartedAtTicks > 0L && sourceStartedAtTicks < owner.sessionStartedAtTicks;
+        }
+
+        private static bool IsLocalSessionOlder(CanvasUiSync owner, long incomingSessionStartedAtTicks, float incomingSessionUptimeSeconds)
+        {
+            if (incomingSessionUptimeSeconds >= 0f)
+            {
+                var localUptimeSeconds = owner.GetSessionUptimeSeconds();
+                if (Mathf.Abs(localUptimeSeconds - incomingSessionUptimeSeconds) > SessionUptimeComparisonToleranceSeconds)
+                {
+                    return localUptimeSeconds > incomingSessionUptimeSeconds;
+                }
+            }
+
+            return incomingSessionStartedAtTicks > 0L && owner.sessionStartedAtTicks > 0L && incomingSessionStartedAtTicks >= owner.sessionStartedAtTicks;
         }
 
         private static long ReadOptionalInt64(object[] values, int index)
@@ -527,6 +733,40 @@ namespace Mizotake.UnityUiSync
             catch
             {
                 return 0L;
+            }
+        }
+
+        private static int ReadOptionalInt32(object[] values, int index, int fallback)
+        {
+            if (values == null || values.Length <= index || values[index] == null)
+            {
+                return fallback;
+            }
+
+            try
+            {
+                return Mathf.Max(0, Convert.ToInt32(values[index]));
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private static float ReadOptionalSingle(object[] values, int index, float fallback)
+        {
+            if (values == null || values.Length <= index || values[index] == null)
+            {
+                return fallback;
+            }
+
+            try
+            {
+                return Mathf.Max(0f, Convert.ToSingle(values[index]));
+            }
+            catch
+            {
+                return fallback;
             }
         }
 

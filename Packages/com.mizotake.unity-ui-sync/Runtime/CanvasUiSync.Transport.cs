@@ -94,6 +94,7 @@ namespace Mizotake.UnityUiSync
             if (!owner.HasActivePeerTarget())
             {
                 owner.hasSnapshot = true;
+                owner.ClearRequestedSnapshotFromNewerPeer();
                 return;
             }
 
@@ -140,8 +141,7 @@ namespace Mizotake.UnityUiSync
 
             foreach (var snapshotId in owner.expiredSnapshotIds)
             {
-                owner.activeSnapshotIds.Remove(snapshotId);
-                owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
+                CanvasUiSyncProtocolService.HandleSnapshotTimeout(owner, snapshotId);
                 if (owner.ShouldVerboseLog())
                 {
                     var builder = owner.stringBuilderScratch;
@@ -171,6 +171,7 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.hasSnapshot = false;
+            owner.AllowRequestedSnapshotFromNewerPeer();
             owner.snapshotRetryCount = 0;
             owner.RequestSnapshotIfNeeded(true);
             owner.nextPeriodicResyncTime = now + owner.profile.periodicFullResyncIntervalSeconds;
@@ -239,7 +240,7 @@ namespace Mizotake.UnityUiSync
                 var endpoint = owner.profile.peerEndpoints[index];
                 if (IsPeerTargetActive(owner, endpoint))
                 {
-                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks));
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), owner.GetSessionUptimeSeconds());
                 }
             }
         }
@@ -305,6 +306,11 @@ namespace Mizotake.UnityUiSync
                 }
             }
 
+            if (owner.expiredNodeIds.Count > 0 && owner.nodes.Count == 0)
+            {
+                owner.ClearRequestedSnapshotFromNewerPeer();
+            }
+
             owner.expiredNodeIds.Clear();
         }
 
@@ -328,7 +334,14 @@ namespace Mizotake.UnityUiSync
             using (SendSnapshotMarker.Auto())
             {
                 var snapshotId = Guid.NewGuid().ToString("N");
-                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks) });
+                var snapshotStateCount = CountSnapshotStateValues(owner);
+                owner.snapshotSequence = owner.snapshotSequence == int.MaxValue ? 1 : owner.snapshotSequence + 1;
+                if (owner.client != null)
+                {
+                    owner.client.maxQueueSize = Mathf.Max(owner.client.maxQueueSize, snapshotStateCount + 16);
+                }
+
+                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), snapshotStateCount, owner.GetSessionUptimeSeconds(), owner.snapshotSequence });
                 foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
                 {
                     sendState(values);
@@ -347,6 +360,20 @@ namespace Mizotake.UnityUiSync
                     builder.Length = 0;
                 }
             }
+        }
+
+        private static int CountSnapshotStateValues(CanvasUiSync owner)
+        {
+            var count = 0;
+            foreach (var pair in owner.bindings)
+            {
+                if (pair.Value.ValueType != "Button" && owner.localStates.ContainsKey(pair.Key))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         internal static IEnumerable<object[]> EnumerateSnapshotStateValues(CanvasUiSync owner, string snapshotId)

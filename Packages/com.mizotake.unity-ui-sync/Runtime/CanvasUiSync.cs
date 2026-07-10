@@ -46,8 +46,11 @@ namespace Mizotake.UnityUiSync
         internal readonly Dictionary<string, PendingButtonCommit> pendingRemoteButtonCommits = new Dictionary<string, PendingButtonCommit>();
         internal readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
         internal readonly Dictionary<string, bool> activeSnapshotCanInitializeLocalState = new Dictionary<string, bool>();
+        internal readonly Dictionary<string, SnapshotReceiveState> snapshotReceiveStates = new Dictionary<string, SnapshotReceiveState>();
+        internal readonly Dictionary<string, int> latestSnapshotSequenceBySourceSession = new Dictionary<string, int>();
         internal readonly List<string> stateCacheKeysToRemove = new List<string>();
         internal readonly List<string> expiredSnapshotIds = new List<string>();
+        internal readonly List<string> snapshotIdScratch = new List<string>();
         internal readonly List<string> expiredNodeIds = new List<string>();
         internal readonly List<string> bindingKeyScratch = new List<string>();
         internal readonly Dictionary<Transform, string> pathCacheScratch = new Dictionary<Transform, string>();
@@ -72,6 +75,7 @@ namespace Mizotake.UnityUiSync
         internal string canvasId = string.Empty;
         internal string sessionId = string.Empty;
         internal long sessionStartedAtTicks;
+        internal float sessionStartedAtRealtime;
         internal float nextHelloTime;
         internal float nextSnapshotRequestTime;
         internal float nextPeriodicResyncTime;
@@ -80,7 +84,9 @@ namespace Mizotake.UnityUiSync
         internal float currentHierarchyRescanIntervalSeconds = RuntimeHierarchyRescanIntervalSeconds;
         internal float nextPendingCommitTime = float.PositiveInfinity;
         internal float snapshotCooldownUntil;
+        internal float acceptRequestedSnapshotFromNewerPeerUntil;
         internal int snapshotRetryCount;
+        internal int snapshotSequence;
         internal int suppressionCount;
         internal int localSequence;
         internal long logicalTicks;
@@ -96,6 +102,7 @@ namespace Mizotake.UnityUiSync
         internal int bindingHierarchySignature;
         internal bool initialized;
         internal bool hasSnapshot;
+        internal bool acceptRequestedSnapshotFromNewerPeer;
         internal bool transportListenerSubscribed;
         internal uOscServer server;
         internal uOscClient client;
@@ -106,18 +113,42 @@ namespace Mizotake.UnityUiSync
 
         internal sealed class NodeState
         {
-            public NodeState(string nodeId, string sessionId, float lastSeenAt, long sessionStartedAtTicks = 0L)
+            public NodeState(string nodeId, string sessionId, float lastSeenAt, long sessionStartedAtTicks = 0L, float sessionUptimeSeconds = -1f)
             {
                 NodeId = nodeId;
                 SessionId = sessionId;
                 LastSeenAt = lastSeenAt;
                 SessionStartedAtTicks = sessionStartedAtTicks;
+                SessionUptimeSeconds = sessionUptimeSeconds;
             }
 
             public string NodeId { get; }
             public string SessionId { get; set; }
             public float LastSeenAt { get; set; }
             public long SessionStartedAtTicks { get; set; }
+            public float SessionUptimeSeconds { get; set; }
+        }
+
+        internal sealed class SnapshotReceiveState
+        {
+            public SnapshotReceiveState(string sourceNodeId, string sourceSessionId, bool canInitializeLocalState, int expectedStateCount)
+            {
+                SourceNodeId = sourceNodeId;
+                SourceSessionId = sourceSessionId;
+                CanInitializeLocalState = canInitializeLocalState;
+                ExpectedStateCount = expectedStateCount;
+            }
+
+            public string SourceNodeId { get; }
+            public string SourceSessionId { get; }
+            public bool CanInitializeLocalState { get; }
+            public int ExpectedStateCount { get; }
+            public HashSet<string> ReceivedSyncIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public HashSet<string> PendingSyncIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public bool EndReceived { get; set; }
+            public float CompletionDeadline { get; set; } = float.PositiveInfinity;
+
+            public bool IsReady => EndReceived && (ExpectedStateCount < 0 || ReceivedSyncIds.Count >= ExpectedStateCount) && PendingSyncIds.Count == 0;
         }
 
         internal sealed class LocalStateRecord
@@ -280,6 +311,7 @@ namespace Mizotake.UnityUiSync
             canvasId = string.IsNullOrWhiteSpace(canvasIdOverride) ? gameObject.name : canvasIdOverride.Trim();
             sessionId = Guid.NewGuid().ToString("N");
             sessionStartedAtTicks = DateTime.UtcNow.Ticks;
+            sessionStartedAtRealtime = Time.realtimeSinceStartup;
             canvasComponent = GetComponent<Canvas>();
             InitializeTransport();
             ScanBindings();
@@ -327,6 +359,7 @@ namespace Mizotake.UnityUiSync
             }
 
             UnsubscribeTransportListener();
+            CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
             ClearContinuousInteractionStates();
         }
 
@@ -345,11 +378,13 @@ namespace Mizotake.UnityUiSync
 
             if (!syncEnabled)
             {
+                CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
                 ClearContinuousInteractionStates();
                 return;
             }
 
             RefreshBindingsIfHierarchyChanged(true);
+            AllowRequestedSnapshotFromNewerPeer();
             hasSnapshot = false;
             snapshotRetryCount = 0;
             snapshotCooldownUntil = 0f;
@@ -406,6 +441,40 @@ namespace Mizotake.UnityUiSync
         internal bool CanProcessRuntimeEvents()
         {
             return initialized && syncEnabled && isActiveAndEnabled;
+        }
+
+        internal bool CanPublishLocalEvents()
+        {
+            return CanProcessRuntimeEvents() && snapshotReceiveStates.Count == 0;
+        }
+
+        internal float GetSessionUptimeSeconds()
+        {
+            return Mathf.Max(0f, Time.realtimeSinceStartup - sessionStartedAtRealtime);
+        }
+
+        internal void AllowRequestedSnapshotFromNewerPeer()
+        {
+            acceptRequestedSnapshotFromNewerPeer = true;
+            var retryWindowSeconds = Mathf.Max(profile.snapshotRequestIntervalSeconds, profile.snapshotRetryCooldownSeconds) * Mathf.Max(1, profile.snapshotRequestRetryCount);
+            acceptRequestedSnapshotFromNewerPeerUntil = Time.unscaledTime + Mathf.Max(0.5f, profile.snapshotStateTimeoutSeconds) + Mathf.Max(0f, profile.initialSyncPendingTimeoutSeconds) + retryWindowSeconds;
+        }
+
+        internal bool CanAcceptRequestedSnapshotFromNewerPeer()
+        {
+            if (acceptRequestedSnapshotFromNewerPeer && Time.unscaledTime <= acceptRequestedSnapshotFromNewerPeerUntil)
+            {
+                return true;
+            }
+
+            ClearRequestedSnapshotFromNewerPeer();
+            return false;
+        }
+
+        internal void ClearRequestedSnapshotFromNewerPeer()
+        {
+            acceptRequestedSnapshotFromNewerPeer = false;
+            acceptRequestedSnapshotFromNewerPeerUntil = 0f;
         }
 
         internal void SubscribeTransportListener()
@@ -487,6 +556,7 @@ namespace Mizotake.UnityUiSync
                 }
 
                 ApplyRemoteState(pair.Key, pending.ValueType, pending.Value, pending.Stamp, pending.IsSnapshot, pending.CanInitializeLocalState);
+                CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, pair.Key);
                 stateCacheKeysToRemove.Add(pair.Key);
             }
 
@@ -550,7 +620,12 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteCommits)
             {
-                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= Mathf.Max(0f, pair.Value.TimeoutSeconds))
+                if (pair.Value.IsSnapshot && IsSnapshotStatePending(pair.Key))
+                {
+                    continue;
+                }
+
+                if (now - pair.Value.ReceivedAt <= Mathf.Max(0f, pair.Value.TimeoutSeconds))
                 {
                     continue;
                 }
@@ -566,7 +641,7 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteButtonCommits)
             {
-                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
+                if (now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
                 {
                     continue;
                 }
@@ -580,6 +655,19 @@ namespace Mizotake.UnityUiSync
             }
 
             stateCacheKeysToRemove.Clear();
+        }
+
+        internal bool IsSnapshotStatePending(string syncId)
+        {
+            foreach (var snapshotState in snapshotReceiveStates.Values)
+            {
+                if (snapshotState.PendingSyncIds.Contains(syncId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal float GetPendingRemoteCommitTimeoutSeconds(bool isSnapshot)

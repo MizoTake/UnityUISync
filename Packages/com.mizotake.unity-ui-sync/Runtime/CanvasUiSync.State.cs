@@ -46,7 +46,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalStateChanged(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool force)
         {
-            if (!owner.CanProcessRuntimeEvents() || owner.suppressionCount > 0)
+            if (!owner.CanPublishLocalEvents() || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -80,7 +80,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalButtonClicked(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding)
         {
-            if (!owner.CanProcessRuntimeEvents() || owner.suppressionCount > 0)
+            if (!owner.CanPublishLocalEvents() || owner.suppressionCount > 0)
             {
                 return;
             }
@@ -246,7 +246,7 @@ namespace Mizotake.UnityUiSync
                     return;
                 }
 
-                if (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
+                if (isSnapshot || !owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
                 {
                     owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
                     owner.HandleUnknownSyncId(syncId);

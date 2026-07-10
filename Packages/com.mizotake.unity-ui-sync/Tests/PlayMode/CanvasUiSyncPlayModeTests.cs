@@ -595,6 +595,33 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator InitialSnapshot_LatePeerRuntimeControl_IsAppliedBeforeSynchronizationCompletes()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            yield return WaitFrames(10);
+
+            const string syncId = "DemoCanvas/LateInitialToggle:Toggle";
+            var peerAToggle = CreateRuntimeToggle(peerA.sync.transform, "LateInitialToggle");
+            yield return WaitUntil(() => HasBinding(peerA.sync, syncId), 60);
+            peerAToggle.isOn = true;
+            yield return WaitFrames(3);
+
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            GetProfile(peerB.sync).initialSyncPendingTimeoutSeconds = 3f;
+            yield return WaitUntil(() => ((IDictionary)GetPrivateField(peerB.sync, "pendingRemoteCommits")).Contains(syncId), 180);
+
+            Assert.That((bool)GetPrivateField(peerB.sync, "hasSnapshot"), Is.False);
+
+            var peerBToggle = CreateRuntimeToggle(peerB.sync.transform, "LateInitialToggle");
+            peerBToggle.SetIsOnWithoutNotify(false);
+            yield return WaitUntil(() => HasBinding(peerB.sync, syncId) && peerBToggle.isOn && (bool)GetPrivateField(peerB.sync, "hasSnapshot"), 180);
+
+            Assert.That(peerBToggle.isOn, Is.True);
+            Assert.That((bool)GetPrivateField(peerB.sync, "hasSnapshot"), Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator SharedRuntimeControls_RemoteSyncOff_StatefulControlsCatchUpWithinBudget_ButtonDoesNotReplay()
         {
             var ports = AllocatePortPair();

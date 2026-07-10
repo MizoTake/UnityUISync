@@ -696,6 +696,7 @@ namespace Mizotake.UnityUiSync
             }
 
             owner.hasSnapshot = false;
+            owner.AllowRequestedSnapshotFromNewerPeer();
             owner.snapshotRetryCount = 0;
             owner.nextSnapshotRequestTime = Time.unscaledTime;
             owner.snapshotCooldownUntil = 0f;
@@ -1378,7 +1379,5 @@ namespace Mizotake.UnityUiSync
         }
     }
 }
-
-
 
 
