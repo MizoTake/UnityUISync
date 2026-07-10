@@ -1359,6 +1359,27 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator DisabledMonoBehaviour_ReenableRequestsSnapshotMissedWhileDisabled()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort);
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort);
+            yield return null;
+            yield return null;
+
+            peerA.sync.enabled = false;
+            yield return WaitFrames(3);
+            peerB.toggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerA.toggle.isOn, Is.False);
+
+            peerA.sync.enabled = true;
+            yield return WaitUntil(() => peerA.toggle.isOn, 120);
+
+            Assert.That(peerA.toggle.isOn, Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator RuntimeGeneratedDropdown_ValueSyncsAcrossPeers()
         {
             var ports = AllocatePortPair();

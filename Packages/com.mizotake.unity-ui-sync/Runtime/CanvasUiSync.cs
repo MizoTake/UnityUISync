@@ -103,6 +103,7 @@ namespace Mizotake.UnityUiSync
         internal bool initialized;
         internal bool hasSnapshot;
         internal bool acceptRequestedSnapshotFromNewerPeer;
+        internal bool resumeSynchronizationOnEnable;
         internal bool transportListenerSubscribed;
         internal uOscServer server;
         internal uOscClient client;
@@ -349,6 +350,18 @@ namespace Mizotake.UnityUiSync
                 bindingHierarchySignature = ComputeBindingHierarchySignature();
                 ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             }
+
+            if (resumeSynchronizationOnEnable && syncEnabled)
+            {
+                resumeSynchronizationOnEnable = false;
+                AllowRequestedSnapshotFromNewerPeer();
+                hasSnapshot = false;
+                snapshotRetryCount = 0;
+                snapshotCooldownUntil = 0f;
+                ScheduleSynchronizationNow(Time.unscaledTime);
+                SendHello();
+                RequestSnapshotIfNeeded(true);
+            }
         }
 
         private void OnDisable()
@@ -359,6 +372,7 @@ namespace Mizotake.UnityUiSync
             }
 
             UnsubscribeTransportListener();
+            resumeSynchronizationOnEnable = syncEnabled;
             CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
             ClearContinuousInteractionStates();
         }
@@ -378,6 +392,7 @@ namespace Mizotake.UnityUiSync
 
             if (!syncEnabled)
             {
+                resumeSynchronizationOnEnable = false;
                 CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
                 ClearContinuousInteractionStates();
                 return;
