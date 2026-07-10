@@ -15,6 +15,7 @@ namespace Mizotake.UnityUiSync
         public int snapshotRequestRetryCount = 5;
         public float snapshotRetryCooldownSeconds = 5f;
         public float snapshotStateTimeoutSeconds = 10f;
+        public float initialSyncPendingTimeoutSeconds = 1f;
         public float periodicFullResyncIntervalSeconds = 60f;
         public float sliderEpsilon = 0.001f;
         public float minimumProposeIntervalSeconds = 0.05f;
@@ -53,6 +54,7 @@ namespace Mizotake.UnityUiSync
             snapshotRequestRetryCount = Mathf.Max(1, snapshotRequestRetryCount);
             snapshotRetryCooldownSeconds = Mathf.Max(0.1f, snapshotRetryCooldownSeconds);
             snapshotStateTimeoutSeconds = Mathf.Max(0.5f, snapshotStateTimeoutSeconds);
+            initialSyncPendingTimeoutSeconds = Mathf.Max(0f, initialSyncPendingTimeoutSeconds);
             periodicFullResyncIntervalSeconds = Mathf.Max(0f, periodicFullResyncIntervalSeconds);
             sliderEpsilon = Mathf.Max(0f, sliderEpsilon);
             minimumProposeIntervalSeconds = Mathf.Max(0f, minimumProposeIntervalSeconds);

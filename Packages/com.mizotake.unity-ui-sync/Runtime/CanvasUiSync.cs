@@ -220,18 +220,24 @@ namespace Mizotake.UnityUiSync
 
         internal readonly struct DeferredStateCommit
         {
-            public DeferredStateCommit(string valueType, object value, StateStamp stamp, float receivedAt = 0f)
+            public DeferredStateCommit(string valueType, object value, StateStamp stamp, float receivedAt = 0f, bool isSnapshot = false, bool canInitializeLocalState = false, float timeoutSeconds = PendingRemoteCommitTimeoutSeconds)
             {
                 ValueType = valueType;
                 Value = value;
                 Stamp = stamp;
                 ReceivedAt = receivedAt;
+                IsSnapshot = isSnapshot;
+                CanInitializeLocalState = canInitializeLocalState;
+                TimeoutSeconds = timeoutSeconds;
             }
 
             public string ValueType { get; }
             public object Value { get; }
             public StateStamp Stamp { get; }
             public float ReceivedAt { get; }
+            public bool IsSnapshot { get; }
+            public bool CanInitializeLocalState { get; }
+            public float TimeoutSeconds { get; }
         }
 
         internal readonly struct PendingButtonCommit
@@ -480,7 +486,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                ApplyRemoteState(pair.Key, pending.ValueType, pending.Value, pending.Stamp, false);
+                ApplyRemoteState(pair.Key, pending.ValueType, pending.Value, pending.Stamp, pending.IsSnapshot, pending.CanInitializeLocalState);
                 stateCacheKeysToRemove.Add(pair.Key);
             }
 
@@ -544,7 +550,7 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteCommits)
             {
-                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
+                if (pair.Value.ReceivedAt > 0f && now - pair.Value.ReceivedAt <= Mathf.Max(0f, pair.Value.TimeoutSeconds))
                 {
                     continue;
                 }
@@ -574,6 +580,16 @@ namespace Mizotake.UnityUiSync
             }
 
             stateCacheKeysToRemove.Clear();
+        }
+
+        internal float GetPendingRemoteCommitTimeoutSeconds(bool isSnapshot)
+        {
+            if (!isSnapshot)
+            {
+                return PendingRemoteCommitTimeoutSeconds;
+            }
+
+            return profile != null ? Mathf.Max(0f, profile.initialSyncPendingTimeoutSeconds) : 1f;
         }
 
         internal void RemoveMissingBindingState<TValue>(Dictionary<string, TValue> valuesBySyncId)

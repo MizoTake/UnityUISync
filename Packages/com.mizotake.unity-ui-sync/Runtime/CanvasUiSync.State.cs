@@ -234,6 +234,7 @@ namespace Mizotake.UnityUiSync
         {
             if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
+                var pendingTimeoutSeconds = owner.GetPendingRemoteCommitTimeoutSeconds(isSnapshot);
                 if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing))
                 {
                     if (!owner.IsIncomingStampNewer(existing.Stamp, stamp))
@@ -241,13 +242,13 @@ namespace Mizotake.UnityUiSync
                         return;
                     }
 
-                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
                     return;
                 }
 
                 if (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
                 {
-                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime);
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
                     owner.HandleUnknownSyncId(syncId);
                     return;
                 }

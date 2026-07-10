@@ -896,6 +896,61 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void HandleSnapshotState_UnknownSyncId_AppliesInitialSnapshotAfterRuntimeGeneratedBinding()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeToggle:Toggle";
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", syncId, "Toggle", true, 0L, "", 0);
+
+            var toggleObject = new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+
+            InvokePrivate(sync, "ScanBindings");
+            InvokePrivate(sync, "InitializeLocalState");
+
+            Assert.That(toggle.isOn, Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void HandleSnapshotState_UnknownSyncId_DropsInitialSnapshotAfterConfiguredPendingTimeout()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.initialSyncPendingTimeoutSeconds = 0.5f;
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeToggle:Toggle";
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", syncId, "Toggle", true, 0L, "", 0);
+            ReplacePendingRemoteCommitReceivedAt(sync, syncId, Time.unscaledTime - 1f);
+            InvokePrivate(sync, "PrunePendingRemoteCommits");
+
+            var toggleObject = new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+
+            InvokePrivate(sync, "ScanBindings");
+            InvokePrivate(sync, "InitializeLocalState");
+
+            Assert.That(toggle.isOn, Is.False);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
         public void HandleCommitState_UnknownSyncId_OlderPendingCommitDoesNotReplaceNewerOne()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -1320,6 +1375,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             profile.snapshotRequestRetryCount = 0;
             profile.snapshotRetryCooldownSeconds = -4f;
             profile.snapshotStateTimeoutSeconds = -8f;
+            profile.initialSyncPendingTimeoutSeconds = -11f;
             profile.periodicFullResyncIntervalSeconds = -9f;
             profile.sliderEpsilon = -5f;
             profile.minimumProposeIntervalSeconds = -6f;
@@ -1337,6 +1393,7 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(profile.snapshotRequestRetryCount, Is.EqualTo(1));
             Assert.That(profile.snapshotRetryCooldownSeconds, Is.EqualTo(0.1f));
             Assert.That(profile.snapshotStateTimeoutSeconds, Is.EqualTo(0.5f));
+            Assert.That(profile.initialSyncPendingTimeoutSeconds, Is.EqualTo(0f));
             Assert.That(profile.periodicFullResyncIntervalSeconds, Is.EqualTo(0f));
             Assert.That(profile.sliderEpsilon, Is.EqualTo(0f));
             Assert.That(profile.minimumProposeIntervalSeconds, Is.EqualTo(0f));
@@ -1346,6 +1403,13 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             Assert.That(profile.listenPort, Is.EqualTo(1));
             Assert.That(profile.peerEndpoints[0].port, Is.EqualTo(65535));
             Assert.That(profile.peerEndpoints[0].ipAddress, Is.EqualTo("127.0.0.1"));
+        }
+
+        [Test]
+        public void Profile_DefaultInitialSyncPendingTimeoutSeconds_IsOneSecond()
+        {
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            Assert.That(profile.initialSyncPendingTimeoutSeconds, Is.EqualTo(1f));
         }
 
         [Test]
@@ -1609,6 +1673,16 @@ namespace Mizotake.UnityUiSync.Tests.Editor
             var stampType = sync.GetType().GetNestedType("StateStamp", BindingFlags.NonPublic);
             Assert.That(stampType, Is.Not.Null);
             return global::System.Activator.CreateInstance(stampType, timestampTicks, nodeId, sequence);
+        }
+
+        private static void ReplacePendingRemoteCommitReceivedAt(CanvasUiSync sync, string syncId, float receivedAt)
+        {
+            var pendingRemoteCommits = (IDictionary)GetPrivateField(sync, "pendingRemoteCommits");
+            Assert.That(pendingRemoteCommits.Contains(syncId), Is.True);
+            var pending = pendingRemoteCommits[syncId];
+            var pendingType = pending.GetType();
+            var replacement = global::System.Activator.CreateInstance(pendingType, pendingType.GetProperty("ValueType").GetValue(pending), pendingType.GetProperty("Value").GetValue(pending), pendingType.GetProperty("Stamp").GetValue(pending), receivedAt, pendingType.GetProperty("IsSnapshot").GetValue(pending), pendingType.GetProperty("CanInitializeLocalState").GetValue(pending), pendingType.GetProperty("TimeoutSeconds").GetValue(pending));
+            pendingRemoteCommits[syncId] = replacement;
         }
 
         private static object InvokePrivate(object instance, string methodName, params object[] arguments)

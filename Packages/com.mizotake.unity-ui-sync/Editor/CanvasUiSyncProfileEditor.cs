@@ -20,6 +20,7 @@ namespace Mizotake.UnityUiSync.Editor
         private SerializedProperty snapshotRequestRetryCountProperty;
         private SerializedProperty snapshotRetryCooldownSecondsProperty;
         private SerializedProperty snapshotStateTimeoutSecondsProperty;
+        private SerializedProperty initialSyncPendingTimeoutSecondsProperty;
         private SerializedProperty periodicFullResyncIntervalSecondsProperty;
         private SerializedProperty sliderEpsilonProperty;
         private SerializedProperty minimumProposeIntervalSecondsProperty;
@@ -50,6 +51,7 @@ namespace Mizotake.UnityUiSync.Editor
             snapshotRequestRetryCountProperty = serializedObject.FindProperty("snapshotRequestRetryCount");
             snapshotRetryCooldownSecondsProperty = serializedObject.FindProperty("snapshotRetryCooldownSeconds");
             snapshotStateTimeoutSecondsProperty = serializedObject.FindProperty("snapshotStateTimeoutSeconds");
+            initialSyncPendingTimeoutSecondsProperty = serializedObject.FindProperty("initialSyncPendingTimeoutSeconds");
             periodicFullResyncIntervalSecondsProperty = serializedObject.FindProperty("periodicFullResyncIntervalSeconds");
             sliderEpsilonProperty = serializedObject.FindProperty("sliderEpsilon");
             minimumProposeIntervalSecondsProperty = serializedObject.FindProperty("minimumProposeIntervalSeconds");
@@ -96,6 +98,7 @@ namespace Mizotake.UnityUiSync.Editor
             EditorGUILayout.PropertyField(snapshotRequestRetryCountProperty, new GUIContent("Snapshot 再試行回数"));
             EditorGUILayout.PropertyField(snapshotRetryCooldownSecondsProperty, new GUIContent("Snapshot 再試行クールダウン (秒)"));
             EditorGUILayout.PropertyField(snapshotStateTimeoutSecondsProperty, new GUIContent("Snapshot 保持タイムアウト (秒)", "BeginSnapshot を受けたまま EndSnapshot が来ない場合の掃除時間です。"));
+            EditorGUILayout.PropertyField(initialSyncPendingTimeoutSecondsProperty, new GUIContent("初期同期 UI 待機 (秒)", "初期同期 Snapshot の対象 UI が未生成の場合に、生成後の適用を待つ最大時間です。"));
             EditorGUILayout.PropertyField(periodicFullResyncIntervalSecondsProperty, new GUIContent("定期フル再同期間隔 (秒)", "0 で無効です。長時間運用で状態ずれをならします。"));
             EditorGUILayout.PropertyField(sliderEpsilonProperty, new GUIContent("連続値の最小差分"));
             EditorGUILayout.PropertyField(minimumProposeIntervalSecondsProperty, new GUIContent("ローカル送信の最小間隔 (秒)"));
