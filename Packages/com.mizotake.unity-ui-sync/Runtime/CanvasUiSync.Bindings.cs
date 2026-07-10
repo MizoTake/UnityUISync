@@ -194,7 +194,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Toggle"), "Toggle", () => component.isOn, value => component.SetIsOnWithoutNotify(Convert.ToBoolean(value)), false);
+                var binding = new CanvasUiSync.UiSyncBinding(component, context.BuildSyncId(component.transform, "Toggle"), "Toggle", () => component.isOn, value => SetToggleValue(component, Convert.ToBoolean(value)), false);
                 UnityEngine.Events.UnityAction<bool> listener = value => owner.OnLocalStateChanged(binding, value, false);
                 binding.Unsubscribe = () => component.onValueChanged.RemoveListener(listener);
                 component.onValueChanged.AddListener(listener);
@@ -984,6 +984,14 @@ namespace Mizotake.UnityUiSync
             }
 
             return GetDropdownItemToggle(owner, dropdownList, dropdown.options.Count, optionIndex);
+        }
+
+        private static void SetToggleValue(Toggle toggle, bool value)
+        {
+            if (toggle.isOn != value)
+            {
+                toggle.isOn = value;
+            }
         }
 
         private static void SetDropdownValue(CanvasUiSync owner, Dropdown dropdown, int value)
