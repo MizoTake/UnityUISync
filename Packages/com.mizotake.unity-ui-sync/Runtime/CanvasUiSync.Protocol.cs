@@ -85,10 +85,20 @@ namespace Mizotake.UnityUiSync
             var incomingSessionId = ReadString(values, 3);
             var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
             var incomingSessionUptimeSeconds = ReadOptionalSingle(values, 5, -1f);
-            if (owner.ShouldIgnoreIncomingPeer(nodeId))
+            var incomingRegistryHash = values.Length > 6 ? ReadString(values, 6) : string.Empty;
+            var incomingFullRegistryHash = values.Length > 7 ? ReadString(values, 7) : string.Empty;
+            var incomingHasExclusions = ReadOptionalInt32(values, 8, 0) != 0;
+            if (owner.ShouldIgnoreIncomingPeer(nodeId) || owner.IsPeerSessionIgnored(nodeId, incomingSessionId))
             {
                 return;
             }
+
+            if (IsOlderPeerSessionHello(owner, nodeId, incomingSessionId, incomingSessionStartedAtTicks))
+            {
+                return;
+            }
+
+            AcceptNewPeerSession(owner, nodeId, incomingSessionId);
 
             if (owner.ShouldDebugLog() && protocolVersion != owner.profile.protocolVersion)
             {
@@ -102,6 +112,9 @@ namespace Mizotake.UnityUiSync
                     node.SessionId = incomingSessionId;
                     node.SessionStartedAtTicks = incomingSessionStartedAtTicks;
                     node.SessionUptimeSeconds = incomingSessionUptimeSeconds;
+                    node.RegistryHash = incomingRegistryHash;
+                    node.FullRegistryHash = incomingFullRegistryHash;
+                    node.HasExclusions = incomingHasExclusions;
                     SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
                 }
 
@@ -115,16 +128,25 @@ namespace Mizotake.UnityUiSync
                 {
                     node.SessionUptimeSeconds = incomingSessionUptimeSeconds;
                 }
+
+                node.RegistryHash = incomingRegistryHash;
+                node.FullRegistryHash = incomingFullRegistryHash;
+                node.HasExclusions = incomingHasExclusions;
             }
             else
             {
                 owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
+                owner.nodes[nodeId].RegistryHash = incomingRegistryHash;
+                owner.nodes[nodeId].FullRegistryHash = incomingFullRegistryHash;
+                owner.nodes[nodeId].HasExclusions = incomingHasExclusions;
                 if (owner.ShouldDebugLog())
                 {
                     LogPeerJoin(owner, nodeId);
                 }
                 SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
             }
+
+            HandlePeerRegistryHashChanged(owner, nodeId, incomingSessionId, incomingRegistryHash);
         }
 
         internal static void HandleRequestSnapshot(CanvasUiSync owner, object[] values)
@@ -142,7 +164,8 @@ namespace Mizotake.UnityUiSync
 
             var nodeId = ReadString(values, 0);
             var incomingRegistryHash = ReadString(values, 2);
-            if (owner.ShouldIgnoreIncomingPeer(nodeId))
+            var incomingSessionId = values.Length > 3 ? ReadString(values, 3) : string.Empty;
+            if (owner.ShouldIgnoreIncomingPeer(nodeId) || (!string.IsNullOrEmpty(incomingSessionId) && owner.IsPeerSessionIgnored(nodeId, incomingSessionId)) || (string.IsNullOrEmpty(incomingSessionId) && owner.HasIgnoredPeerSession(nodeId)))
             {
                 return;
             }
@@ -178,18 +201,21 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            var snapshotId = ReadString(values, 0);
             var nodeId = ReadString(values, 2);
-            if (owner.ShouldIgnoreIncomingPeer(nodeId))
+            var incomingSessionId = ReadString(values, 3);
+            if (owner.ShouldIgnoreIncomingPeer(nodeId) || owner.IsPeerSessionIgnored(nodeId, incomingSessionId) || IsUnexpectedPeerSession(owner, nodeId, incomingSessionId))
             {
                 return;
             }
 
-            var snapshotId = ReadString(values, 0);
-            var incomingSessionId = ReadString(values, 3);
             var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
             var expectedStateCount = ReadOptionalInt32(values, 5, -1);
             var incomingSessionUptimeSeconds = ReadOptionalSingle(values, 6, -1f);
             var incomingSnapshotSequence = ReadOptionalInt32(values, 7, -1);
+            var incomingRegistryHash = values.Length > 8 ? ReadString(values, 8) : string.Empty;
+            var incomingHasExclusions = ReadOptionalInt32(values, 9, 0) != 0;
+            var incomingFullRegistryHash = values.Length > 10 ? ReadString(values, 10) : string.Empty;
             var sourceCanInitializeLocalState = CanSnapshotInitializeLocalState(owner, nodeId, incomingSessionId, incomingSessionStartedAtTicks, incomingSessionUptimeSeconds);
             var acceptRequestedSnapshot = owner.CanAcceptRequestedSnapshotFromNewerPeer();
             if (!sourceCanInitializeLocalState && !acceptRequestedSnapshot)
@@ -212,7 +238,7 @@ namespace Mizotake.UnityUiSync
             ResetActiveSnapshotReception(owner);
             owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
             owner.activeSnapshotCanInitializeLocalState[snapshotId] = canInitializeLocalState;
-            owner.snapshotReceiveStates[snapshotId] = new CanvasUiSync.SnapshotReceiveState(nodeId, incomingSessionId, canInitializeLocalState, expectedStateCount);
+            owner.snapshotReceiveStates[snapshotId] = new CanvasUiSync.SnapshotReceiveState(nodeId, incomingSessionId, canInitializeLocalState, expectedStateCount, incomingRegistryHash, incomingHasExclusions, incomingFullRegistryHash);
             owner.hasSnapshot = false;
             if (owner.ShouldDebugLog())
             {
@@ -239,6 +265,11 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            if (owner.IsPeerSessionIgnored(snapshotState.SourceNodeId, snapshotState.SourceSessionId))
+            {
+                return;
+            }
+
             if (!owner.TryReadStamp(values, 5, out var snapshotStamp))
             {
                 return;
@@ -247,13 +278,23 @@ namespace Mizotake.UnityUiSync
             var syncId = ReadString(values, 2);
             var valueType = ReadString(values, 3);
             snapshotState.ReceivedSyncIds.Add(syncId);
+            if (owner.IsSyncIdExcluded(syncId))
+            {
+                owner.DiscardPendingExcludedSyncId(syncId);
+                TryApplyReadySnapshotStates(owner, snapshotState);
+                TryCompleteSnapshot(owner, snapshotId);
+                return;
+            }
+
             snapshotState.PendingSyncIds.Add(syncId);
-            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true, snapshotState.CanInitializeLocalState);
-            if (owner.bindings.TryGetValue(syncId, out var binding) && string.Equals(binding.ValueType, valueType, StringComparison.Ordinal))
+            var deferSnapshotUntilRegistryMatches = !string.IsNullOrEmpty(snapshotState.RemoteRegistryHash);
+            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true, snapshotState.CanInitializeLocalState, deferSnapshotUntilRegistryMatches);
+            if (!deferSnapshotUntilRegistryMatches && owner.bindings.TryGetValue(syncId, out var binding) && string.Equals(binding.ValueType, valueType, StringComparison.Ordinal))
             {
                 snapshotState.PendingSyncIds.Remove(syncId);
             }
 
+            TryApplyReadySnapshotStates(owner, snapshotState);
             TryCompleteSnapshot(owner, snapshotId);
         }
 
@@ -275,14 +316,14 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            var snapshotId = ReadString(values, 0);
             var nodeId = ReadString(values, 2);
-            if (owner.ShouldIgnoreIncomingPeer(nodeId))
+            var incomingSessionId = ReadString(values, 3);
+            if (owner.ShouldIgnoreIncomingPeer(nodeId) || owner.IsPeerSessionIgnored(nodeId, incomingSessionId))
             {
                 return;
             }
 
-            var snapshotId = ReadString(values, 0);
-            var incomingSessionId = ReadString(values, 3);
             if (!owner.activeSnapshotIds.ContainsKey(snapshotId) || !owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) || !string.Equals(snapshotState.SourceNodeId, nodeId, StringComparison.Ordinal) || !string.Equals(snapshotState.SourceSessionId, incomingSessionId, StringComparison.Ordinal))
             {
                 return;
@@ -291,6 +332,7 @@ namespace Mizotake.UnityUiSync
             snapshotState.EndReceived = true;
             snapshotState.CompletionDeadline = Time.unscaledTime + Mathf.Max(0f, owner.profile.initialSyncPendingTimeoutSeconds);
             owner.activeSnapshotIds[snapshotId] = snapshotState.CompletionDeadline;
+            TryApplyReadySnapshotStates(owner, snapshotState);
             TryCompleteSnapshot(owner, snapshotId);
         }
 
@@ -308,7 +350,8 @@ namespace Mizotake.UnityUiSync
             }
 
             var senderNodeId = ReadString(values, 0);
-            if (owner.ShouldIgnoreIncomingPeer(senderNodeId))
+            var senderSessionId = ReadString(values, 1);
+            if (owner.ShouldIgnoreIncomingPeer(senderNodeId) || owner.IsPeerSessionIgnored(senderNodeId, senderSessionId) || IsUnexpectedPeerSession(owner, senderNodeId, senderSessionId))
             {
                 return;
             }
@@ -320,7 +363,26 @@ namespace Mizotake.UnityUiSync
 
             var syncId = ReadString(values, 3);
             var valueType = ReadString(values, 4);
-            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[5], valueType), stateStamp, false);
+            if (owner.IsSyncIdExcluded(syncId))
+            {
+                owner.DiscardPendingExcludedSyncId(syncId);
+                return;
+            }
+
+            var value = owner.DeserializeValue(values[5], valueType);
+            if (IsSynchronizationBlockedByActiveSnapshot(owner, senderNodeId, senderSessionId))
+            {
+                RegisterPendingSyncIdForActiveSnapshot(owner, senderNodeId, senderSessionId, syncId);
+                owner.ApplyRemoteState(syncId, valueType, value, stateStamp, true, false, true);
+                return;
+            }
+
+            if (IsPeerRegistryMismatch(owner, senderNodeId, senderSessionId))
+            {
+                return;
+            }
+
+            owner.ApplyRemoteState(syncId, valueType, value, stateStamp, false);
         }
 
         internal static void HandleCommitButton(CanvasUiSync owner, object[] values)
@@ -337,7 +399,8 @@ namespace Mizotake.UnityUiSync
             }
 
             var senderNodeId = ReadString(values, 0);
-            if (owner.ShouldIgnoreIncomingPeer(senderNodeId))
+            var senderSessionId = ReadString(values, 1);
+            if (owner.ShouldIgnoreIncomingPeer(senderNodeId) || owner.IsPeerSessionIgnored(senderNodeId, senderSessionId) || IsUnexpectedPeerSession(owner, senderNodeId, senderSessionId))
             {
                 return;
             }
@@ -348,22 +411,46 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            if (owner.IsSyncIdExcluded(syncId))
+            {
+                owner.DiscardPendingExcludedSyncId(syncId);
+                return;
+            }
+
+            if (IsSynchronizationBlockedByActiveSnapshot(owner, senderNodeId, senderSessionId))
+            {
+                if (!owner.bindings.ContainsKey(syncId) && !owner.pendingRemoteButtonCommits.ContainsKey(syncId))
+                {
+                    owner.TryRefreshBindingsForSyncId(syncId);
+                }
+
+                RegisterPendingSyncIdForActiveSnapshot(owner, senderNodeId, senderSessionId, syncId);
+                StorePendingButtonCommit(owner, syncId, stamp, senderNodeId, senderSessionId, true);
+                return;
+            }
+
+            if (IsPeerRegistryMismatch(owner, senderNodeId, senderSessionId))
+            {
+                if (!owner.bindings.ContainsKey(syncId) && !owner.pendingRemoteButtonCommits.ContainsKey(syncId))
+                {
+                    owner.TryRefreshBindingsForSyncId(syncId);
+                }
+
+                StorePendingButtonCommit(owner, syncId, stamp, senderNodeId, senderSessionId, true);
+                return;
+            }
+
             if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
-                if (owner.pendingRemoteButtonCommits.TryGetValue(syncId, out var existing))
+                if (owner.pendingRemoteButtonCommits.ContainsKey(syncId))
                 {
-                    if (!owner.IsIncomingStampNewer(existing.Stamp, stamp))
-                    {
-                        return;
-                    }
-
-                    owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime);
+                    StorePendingButtonCommit(owner, syncId, stamp, senderNodeId, senderSessionId, false);
                     return;
                 }
 
                 if (!owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
                 {
-                    owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime);
+                    StorePendingButtonCommit(owner, syncId, stamp, senderNodeId, senderSessionId, false);
                     owner.HandleUnknownSyncId(syncId);
                     return;
                 }
@@ -375,6 +462,11 @@ namespace Mizotake.UnityUiSync
 
         internal static bool ApplyButtonCommit(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, string syncId, CanvasUiSync.StateStamp stamp)
         {
+            if (owner.IsSyncIdExcluded(syncId))
+            {
+                return false;
+            }
+
             if (binding.Component is not Button button)
             {
                 owner.HandleTypeMismatch(syncId, binding.ValueType, "Button");
@@ -422,6 +514,16 @@ namespace Mizotake.UnityUiSync
                 LogUnauthorizedPeerReject(owner, nodeId);
             }
             return true;
+        }
+
+        internal static bool IsPeerSessionIgnored(CanvasUiSync owner, string nodeId, string peerSessionId)
+        {
+            return owner.ignoredPeerSessions.TryGetValue(nodeId, out var ignoredSessionId) && string.Equals(ignoredSessionId, peerSessionId, StringComparison.Ordinal);
+        }
+
+        internal static bool HasIgnoredPeerSession(CanvasUiSync owner, string nodeId)
+        {
+            return !string.IsNullOrWhiteSpace(nodeId) && owner.ignoredPeerSessions.ContainsKey(nodeId);
         }
 
         internal static CanvasUiSync.StateStamp CreateLocalStamp(CanvasUiSync owner)
@@ -538,7 +640,7 @@ namespace Mizotake.UnityUiSync
             owner.snapshotIdScratch.Clear();
             foreach (var pair in owner.snapshotReceiveStates)
             {
-                if (pair.Value.PendingSyncIds.Remove(syncId) && pair.Value.IsReady)
+                if (pair.Value.PendingSyncIds.Remove(syncId))
                 {
                     owner.snapshotIdScratch.Add(pair.Key);
                 }
@@ -546,33 +648,50 @@ namespace Mizotake.UnityUiSync
 
             for (var index = 0; index < owner.snapshotIdScratch.Count; index++)
             {
-                CompleteSnapshot(owner, owner.snapshotIdScratch[index]);
+                TryCompleteSnapshot(owner, owner.snapshotIdScratch[index]);
             }
 
             owner.snapshotIdScratch.Clear();
         }
 
-        internal static void HandleSnapshotTimeout(CanvasUiSync owner, string snapshotId)
+        internal static bool HandleSnapshotTimeout(CanvasUiSync owner, string snapshotId)
         {
+            owner.RefreshBindingsIfHierarchyChanged(false);
             if (!owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState))
             {
                 owner.activeSnapshotIds.Remove(snapshotId);
                 owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
-                return;
+                return false;
             }
 
             foreach (var syncId in snapshotState.PendingSyncIds)
             {
-                if (owner.pendingRemoteCommits.TryGetValue(syncId, out var pending) && pending.IsSnapshot && !IsPendingInAnotherSnapshot(owner, snapshotId, syncId))
+                if (!IsPendingInAnotherSnapshot(owner, snapshotId, syncId))
                 {
-                    owner.pendingRemoteCommits.Remove(syncId);
+                    if (owner.pendingRemoteCommits.TryGetValue(syncId, out var pending) && pending.IsSnapshot)
+                    {
+                        owner.pendingRemoteCommits.Remove(syncId);
+                    }
+
                 }
             }
 
             owner.snapshotReceiveStates.Remove(snapshotId);
             owner.activeSnapshotIds.Remove(snapshotId);
             owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
-            owner.hasSnapshot = false;
+            var registryMismatch = snapshotState.ExpectedStateCount >= 0 && snapshotState.HasCompletePayload && !string.IsNullOrEmpty(snapshotState.RemoteRegistryHash) && !snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions());
+            if (registryMismatch)
+            {
+                owner.ignoredPeerSessions[snapshotState.SourceNodeId] = snapshotState.SourceSessionId;
+                DiscardPendingButtonCommitsFromPeerSession(owner, snapshotState.SourceNodeId, snapshotState.SourceSessionId);
+                owner.hasSnapshot = true;
+                owner.snapshotRetryCount = 0;
+                owner.ClearRequestedSnapshotFromNewerPeer();
+            }
+            else
+            {
+                owner.hasSnapshot = false;
+            }
 
             if (owner.ShouldDebugLog())
             {
@@ -586,16 +705,63 @@ namespace Mizotake.UnityUiSync
                 builder.Append(snapshotState.ExpectedStateCount);
                 builder.Append(" pendingUi=");
                 builder.Append(snapshotState.PendingSyncIds.Count);
+                builder.Append(" registryMismatch=");
+                builder.Append(registryMismatch);
                 Debug.LogWarning(builder.ToString(), owner);
                 builder.Length = 0;
             }
+
+            return true;
         }
 
         private static void TryCompleteSnapshot(CanvasUiSync owner, string snapshotId)
         {
-            if (owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) && snapshotState.IsReady)
+            if (owner.snapshotReceiveStates.TryGetValue(snapshotId, out var snapshotState) && snapshotState.IsReady && snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions()))
             {
                 CompleteSnapshot(owner, snapshotId);
+            }
+        }
+
+        internal static bool CanApplyPendingSnapshotStates(CanvasUiSync owner)
+        {
+            foreach (var snapshotState in owner.snapshotReceiveStates.Values)
+            {
+                if (!string.IsNullOrEmpty(snapshotState.RemoteRegistryHash) && (!snapshotState.HasCompletePayload || !snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions())))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        internal static void HandleBindingsRefreshed(CanvasUiSync owner)
+        {
+            if (owner.snapshotReceiveStates.Count == 0)
+            {
+                return;
+            }
+
+            owner.snapshotIdScratch.Clear();
+            foreach (var snapshotId in owner.snapshotReceiveStates.Keys)
+            {
+                owner.snapshotIdScratch.Add(snapshotId);
+            }
+
+            for (var index = 0; index < owner.snapshotIdScratch.Count; index++)
+            {
+                TryCompleteSnapshot(owner, owner.snapshotIdScratch[index]);
+            }
+
+            owner.snapshotIdScratch.Clear();
+        }
+
+        private static void TryApplyReadySnapshotStates(CanvasUiSync owner, CanvasUiSync.SnapshotReceiveState snapshotState)
+        {
+            if (snapshotState.HasCompletePayload && snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions()))
+            {
+                owner.ApplyPendingRemoteCommits();
+                owner.ApplyPendingRemoteButtonCommits();
             }
         }
 
@@ -656,6 +822,138 @@ namespace Mizotake.UnityUiSync
             }
 
             return false;
+        }
+
+        private static void AcceptNewPeerSession(CanvasUiSync owner, string nodeId, string incomingSessionId)
+        {
+            if (owner.ignoredPeerSessions.TryGetValue(nodeId, out var ignoredSessionId) && !string.Equals(ignoredSessionId, incomingSessionId, StringComparison.Ordinal))
+            {
+                owner.ignoredPeerSessions.Remove(nodeId);
+            }
+        }
+
+        private static bool IsSynchronizationBlockedByActiveSnapshot(CanvasUiSync owner, string nodeId, string peerSessionId)
+        {
+            foreach (var snapshotState in owner.snapshotReceiveStates.Values)
+            {
+                if (string.Equals(snapshotState.SourceNodeId, nodeId, StringComparison.Ordinal) && string.Equals(snapshotState.SourceSessionId, peerSessionId, StringComparison.Ordinal) && !snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions()))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsUnexpectedPeerSession(CanvasUiSync owner, string nodeId, string peerSessionId)
+        {
+            return owner.HasIgnoredPeerSession(nodeId) || owner.nodes.TryGetValue(nodeId, out var node) && !string.Equals(node.SessionId, peerSessionId, StringComparison.Ordinal);
+        }
+
+        private static bool IsOlderPeerSessionHello(CanvasUiSync owner, string nodeId, string incomingSessionId, long incomingSessionStartedAtTicks)
+        {
+            if (!owner.nodes.TryGetValue(nodeId, out var node) || string.Equals(node.SessionId, incomingSessionId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return node.SessionStartedAtTicks > 0L && incomingSessionStartedAtTicks <= node.SessionStartedAtTicks;
+        }
+
+        private static bool IsPeerRegistryMismatch(CanvasUiSync owner, string nodeId, string peerSessionId)
+        {
+            if (!owner.nodes.TryGetValue(nodeId, out var node) || !string.Equals(node.SessionId, peerSessionId, StringComparison.Ordinal) || string.IsNullOrEmpty(node.RegistryHash))
+            {
+                return false;
+            }
+
+            return !string.Equals(node.RegistryHash, owner.registryHash, StringComparison.Ordinal) && (!(node.HasExclusions || owner.HasConfiguredExclusions()) || string.IsNullOrEmpty(node.FullRegistryHash) || !string.Equals(node.FullRegistryHash, owner.fullRegistryHash, StringComparison.Ordinal));
+        }
+
+        private static void RegisterPendingSyncIdForActiveSnapshot(CanvasUiSync owner, string nodeId, string peerSessionId, string syncId)
+        {
+            foreach (var snapshotState in owner.snapshotReceiveStates.Values)
+            {
+                if (string.Equals(snapshotState.SourceNodeId, nodeId, StringComparison.Ordinal) && string.Equals(snapshotState.SourceSessionId, peerSessionId, StringComparison.Ordinal))
+                {
+                    snapshotState.PendingSyncIds.Add(syncId);
+                }
+            }
+        }
+
+        private static void StorePendingButtonCommit(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp, string sourceNodeId, string sourceSessionId, bool waitForRegistryMatch)
+        {
+            if (owner.pendingRemoteButtonCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
+            {
+                return;
+            }
+
+            owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime, sourceNodeId, sourceSessionId, waitForRegistryMatch);
+        }
+
+        internal static bool ShouldDiscardPendingButtonCommit(CanvasUiSync owner, CanvasUiSync.PendingButtonCommit pending)
+        {
+            return !string.IsNullOrEmpty(pending.SourceNodeId) && (owner.IsPeerSessionIgnored(pending.SourceNodeId, pending.SourceSessionId) || IsUnexpectedPeerSession(owner, pending.SourceNodeId, pending.SourceSessionId));
+        }
+
+        internal static bool CanApplyPendingButtonCommit(CanvasUiSync owner, CanvasUiSync.PendingButtonCommit pending)
+        {
+            if (!pending.WaitForRegistryMatch)
+            {
+                return true;
+            }
+
+            return !IsPeerRegistryMismatch(owner, pending.SourceNodeId, pending.SourceSessionId) && CanApplyPendingSnapshotStates(owner);
+        }
+
+        private static void DiscardPendingButtonCommitsFromPeerSession(CanvasUiSync owner, string nodeId, string peerSessionId)
+        {
+            owner.stateCacheKeysToRemove.Clear();
+            foreach (var pair in owner.pendingRemoteButtonCommits)
+            {
+                if (string.Equals(pair.Value.SourceNodeId, nodeId, StringComparison.Ordinal) && string.Equals(pair.Value.SourceSessionId, peerSessionId, StringComparison.Ordinal))
+                {
+                    owner.stateCacheKeysToRemove.Add(pair.Key);
+                }
+            }
+
+            for (var index = 0; index < owner.stateCacheKeysToRemove.Count; index++)
+            {
+                owner.pendingRemoteButtonCommits.Remove(owner.stateCacheKeysToRemove[index]);
+            }
+
+            owner.stateCacheKeysToRemove.Clear();
+        }
+
+        private static void HandlePeerRegistryHashChanged(CanvasUiSync owner, string nodeId, string peerSessionId, string incomingRegistryHash)
+        {
+            if (string.IsNullOrEmpty(incomingRegistryHash))
+            {
+                return;
+            }
+
+            var shouldRequestReplacementSnapshot = false;
+            foreach (var snapshotState in owner.snapshotReceiveStates.Values)
+            {
+                if (string.Equals(snapshotState.SourceNodeId, nodeId, StringComparison.Ordinal) && string.Equals(snapshotState.SourceSessionId, peerSessionId, StringComparison.Ordinal) && !string.Equals(snapshotState.RemoteRegistryHash, incomingRegistryHash, StringComparison.Ordinal))
+                {
+                    shouldRequestReplacementSnapshot = true;
+                    break;
+                }
+            }
+
+            if (!shouldRequestReplacementSnapshot)
+            {
+                return;
+            }
+
+            ResetActiveSnapshotReception(owner);
+            owner.hasSnapshot = false;
+            owner.AllowRequestedSnapshotFromNewerPeer();
+            owner.snapshotRetryCount = 0;
+            owner.nextSnapshotRequestTime = Time.unscaledTime;
+            owner.snapshotCooldownUntil = 0f;
+            owner.RequestSnapshotIfNeeded(true);
         }
 
         private static void SynchronizeWithHelloPeer(CanvasUiSync owner, string nodeId, long incomingSessionStartedAtTicks, float incomingSessionUptimeSeconds)

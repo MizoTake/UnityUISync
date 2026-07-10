@@ -149,6 +149,8 @@ namespace Mizotake.UnityUiSync
         {
             using (ScanBindingsMarker.Auto())
             {
+                owner.RefreshExclusionRules();
+                owner.PruneExcludedPendingCommits();
                 foreach (var binding in owner.bindings.Values)
                 {
                     binding.Dispose();
@@ -169,6 +171,7 @@ namespace Mizotake.UnityUiSync
                 RegisterTmpInputFields(owner, context);
                 RegisterButtons(owner, context);
                 owner.registryHash = ComputeRegistryHash(owner);
+                owner.fullRegistryHash = ComputeFullRegistryHash(owner, context);
             }
         }
 
@@ -609,8 +612,77 @@ namespace Mizotake.UnityUiSync
             owner.bindingKeyScratch.Clear();
             foreach (var pair in owner.bindings)
             {
-                owner.bindingKeyScratch.Add(pair.Key);
+                AddRegistryDescriptor(owner, pair.Key, pair.Value.ValueType);
             }
+
+            return ComputeRegistryDescriptorHash(owner);
+        }
+
+        private static string ComputeFullRegistryHash(CanvasUiSync owner, BindingScanContext context)
+        {
+            owner.bindingKeyScratch.Clear();
+            AddFullRegistryDescriptors(owner, context, owner.toggleScratch, "Toggle");
+            AddFullRegistryDescriptors(owner, context, owner.sliderScratch, "Slider");
+            AddFullRegistryDescriptors(owner, context, owner.scrollbarScratch, "Scrollbar");
+            for (var index = 0; index < context.Dropdowns.Count; index++)
+            {
+                var dropdown = context.Dropdowns[index];
+                if (ShouldSkipComponent(owner, dropdown, context, true))
+                {
+                    continue;
+                }
+
+                AddRegistryDescriptor(owner, context.BuildSyncId(dropdown.transform, "Dropdown"), "Dropdown");
+                AddRegistryDescriptor(owner, context.BuildSyncId(dropdown.transform, "DropdownExpanded"), "DropdownExpanded");
+                var prefix = context.BuildSyncIdPrefix(dropdown.transform, "DropdownItemToggle[");
+                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+                {
+                    AddRegistryDescriptor(owner, prefix + optionIndex + "]", "Toggle");
+                }
+            }
+
+            for (var index = 0; index < context.TmpDropdowns.Count; index++)
+            {
+                var dropdown = context.TmpDropdowns[index];
+                if (ShouldSkipComponent(owner, dropdown, context, true))
+                {
+                    continue;
+                }
+
+                AddRegistryDescriptor(owner, context.BuildSyncId(dropdown.transform, "TMP_Dropdown"), "TMP_Dropdown");
+                AddRegistryDescriptor(owner, context.BuildSyncId(dropdown.transform, "TMP_DropdownExpanded"), "TMP_DropdownExpanded");
+                var prefix = context.BuildSyncIdPrefix(dropdown.transform, "TMP_DropdownItemToggle[");
+                for (var optionIndex = 0; optionIndex < dropdown.options.Count; optionIndex++)
+                {
+                    AddRegistryDescriptor(owner, prefix + optionIndex + "]", "Toggle");
+                }
+            }
+
+            AddFullRegistryDescriptors(owner, context, owner.inputFieldScratch, "InputField");
+            AddFullRegistryDescriptors(owner, context, owner.tmpInputFieldScratch, "TMP_InputField");
+            AddFullRegistryDescriptors(owner, context, owner.buttonScratch, "Button");
+            return ComputeRegistryDescriptorHash(owner);
+        }
+
+        private static void AddFullRegistryDescriptors<TComponent>(CanvasUiSync owner, BindingScanContext context, List<TComponent> components, string valueType) where TComponent : Component
+        {
+            for (var index = 0; index < components.Count; index++)
+            {
+                var component = components[index];
+                if (!ShouldSkipComponent(owner, component, context, true))
+                {
+                    AddRegistryDescriptor(owner, context.BuildSyncId(component.transform, valueType), valueType);
+                }
+            }
+        }
+
+        private static void AddRegistryDescriptor(CanvasUiSync owner, string syncId, string valueType)
+        {
+            owner.bindingKeyScratch.Add(syncId + ":" + valueType);
+        }
+
+        private static string ComputeRegistryDescriptorHash(CanvasUiSync owner)
+        {
 
             owner.bindingKeyScratch.Sort(StringComparer.Ordinal);
             var builder = owner.stringBuilderScratch;
@@ -624,8 +696,6 @@ namespace Mizotake.UnityUiSync
                 }
 
                 builder.Append(key);
-                builder.Append(':');
-                builder.Append(owner.bindings[key].ValueType);
             }
 
             using (var sha = SHA256.Create())
@@ -679,6 +749,8 @@ namespace Mizotake.UnityUiSync
 
         internal static bool RefreshBindingsIfHierarchyChanged(CanvasUiSync owner, bool force)
         {
+            owner.RefreshExclusionRules();
+            owner.PruneExcludedPendingCommits();
             var signature = ComputeBindingHierarchySignature(owner);
             if (!force && signature == owner.bindingHierarchySignature)
             {
@@ -686,12 +758,19 @@ namespace Mizotake.UnityUiSync
             }
 
             var previousRegistryHash = owner.registryHash;
+            var wasReceivingSnapshot = owner.snapshotReceiveStates.Count > 0;
             owner.ScanBindings();
             owner.InitializeLocalState();
             owner.bindingHierarchySignature = signature;
             owner.ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
             if (!owner.initialized || string.Equals(previousRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
+                return true;
+            }
+
+            if (wasReceivingSnapshot)
+            {
+                owner.SendHello();
                 return true;
             }
 
@@ -709,6 +788,7 @@ namespace Mizotake.UnityUiSync
         {
             using (ComputeBindingHierarchySignatureMarker.Auto())
             {
+                owner.RefreshExclusionRules();
                 unchecked
                 {
                     var context = PrepareBindingScanContext(owner);
@@ -818,9 +898,9 @@ namespace Mizotake.UnityUiSync
             }
         }
 
-        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext context = null)
+        private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext context = null, bool ignoreExclusions = false)
         {
-            return component == null || owner.IsComponentExcluded(component) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
+            return component == null || !ignoreExclusions && owner.IsComponentExcluded(component) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
         }
 
         private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
@@ -1379,5 +1459,3 @@ namespace Mizotake.UnityUiSync
         }
     }
 }
-
-

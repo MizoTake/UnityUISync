@@ -42,12 +42,19 @@ namespace Mizotake.UnityUiSync
             RecalculateNextPendingCommitTime(owner);
             owner.ApplyPendingRemoteCommits();
             owner.ApplyPendingRemoteButtonCommits();
+            owner.HandleBindingsRefreshed();
         }
 
         internal static void OnLocalStateChanged(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool force)
         {
-            if (!owner.CanPublishLocalEvents() || owner.suppressionCount > 0)
+            if (!owner.CanProcessRuntimeEvents() || owner.suppressionCount > 0 || binding == null || owner.IsComponentExcluded(binding.Component) || owner.IsSyncIdExcluded(binding.SyncId))
             {
+                return;
+            }
+
+            if (owner.snapshotReceiveStates.Count != 0)
+            {
+                QueueLocalStateUntilSnapshotCompletes(owner, binding, value);
                 return;
             }
 
@@ -80,7 +87,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void OnLocalButtonClicked(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding)
         {
-            if (!owner.CanPublishLocalEvents() || owner.suppressionCount > 0)
+            if (!owner.CanPublishLocalEvents() || owner.suppressionCount > 0 || binding == null || owner.IsComponentExcluded(binding.Component) || owner.IsSyncIdExcluded(binding.SyncId))
             {
                 return;
             }
@@ -173,6 +180,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void CommitLocalState(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value, bool applyToLocalUi, CanvasUiSync.StateStamp stamp)
         {
+            if (binding == null || owner.IsComponentExcluded(binding.Component) || owner.IsSyncIdExcluded(binding.SyncId))
+            {
+                return;
+            }
+
             object previousValue = null;
             if (!owner.localStates.TryGetValue(binding.SyncId, out var state))
             {
@@ -221,6 +233,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void CommitLocalButton(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, CanvasUiSync.StateStamp stamp)
         {
+            if (binding == null || owner.IsComponentExcluded(binding.Component) || owner.IsSyncIdExcluded(binding.SyncId))
+            {
+                return;
+            }
+
             owner.latestAppliedButtonStamps[binding.SyncId] = stamp;
             owner.BroadcastButton(binding.SyncId, stamp);
         }
@@ -232,6 +249,22 @@ namespace Mizotake.UnityUiSync
 
         internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot, bool canInitializeLocalState)
         {
+            ApplyRemoteState(owner, syncId, valueType, value, stamp, isSnapshot, canInitializeLocalState, false);
+        }
+
+        internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot, bool canInitializeLocalState, bool deferSnapshotUntilRegistryMatches)
+        {
+            if (owner.IsSyncIdExcluded(syncId))
+            {
+                return;
+            }
+
+            if (deferSnapshotUntilRegistryMatches)
+            {
+                StorePendingRemoteState(owner, syncId, valueType, value, stamp, isSnapshot, canInitializeLocalState);
+                return;
+            }
+
             if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
                 var pendingTimeoutSeconds = owner.GetPendingRemoteCommitTimeoutSeconds(isSnapshot);
@@ -310,9 +343,46 @@ namespace Mizotake.UnityUiSync
             }
         }
 
+        private static void StorePendingRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot, bool canInitializeLocalState)
+        {
+            if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
+            {
+                return;
+            }
+
+            owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, owner.GetPendingRemoteCommitTimeoutSeconds(isSnapshot));
+        }
+
+        private static void QueueLocalStateUntilSnapshotCompletes(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value)
+        {
+            var stamp = owner.CreateLocalStamp();
+            object previousValue = null;
+            if (!owner.localStates.TryGetValue(binding.SyncId, out var state))
+            {
+                state = new CanvasUiSync.LocalStateRecord(value, binding.ValueType, stamp);
+                owner.localStates[binding.SyncId] = state;
+            }
+            else
+            {
+                previousValue = state.Value;
+            }
+
+            state.Value = value;
+            state.Stamp = stamp;
+            state.PendingValue = value;
+            state.PendingStamp = stamp;
+            state.HasPendingBroadcast = true;
+            state.NextBroadcastAt = 0f;
+            owner.nextPendingCommitTime = 0f;
+            if (IsDropdownBinding(binding))
+            {
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false);
+            }
+        }
+
         internal static void FlushPendingCommits(CanvasUiSync owner, float now)
         {
-            if (now < owner.nextPendingCommitTime)
+            if (owner.snapshotReceiveStates.Count != 0 || now < owner.nextPendingCommitTime)
             {
                 return;
             }
@@ -323,6 +393,12 @@ namespace Mizotake.UnityUiSync
                 var state = pair.Value;
                 if (!state.HasPendingBroadcast)
                 {
+                    continue;
+                }
+
+                if (owner.IsSyncIdExcluded(pair.Key))
+                {
+                    state.HasPendingBroadcast = false;
                     continue;
                 }
 

@@ -56,3 +56,14 @@ Package Manager から `Import Samples > Basic Setup` を実行すると、`Samp
 2. 未設定の場合は Canvas から当該コンポーネントまでの GameObject 階層パス
 
 同一親配下に同名 GameObject が複数ある場合は hierarchy 順で `[0]`, `[1]` の添字が付きます。階層変更や sibling 順の変更で ID が変わる可能性があるため、動的 UI や同名 UI では `CanvasUiSyncBindingId` の利用を推奨します。
+
+## 同期除外 UI
+
+`CanvasUiSync` Inspector の `同期除外 UI` に対象 Component を登録すると、その UI を同期対象から除外できます。
+
+- 対象 GameObject に `CanvasUiSyncBindingId` があれば Binding ID を安定キーとして使います。
+- Binding ID がなければ Canvas からの相対階層パスを安定キーとして使います。
+- Toggle や Dropdown など同期 UI Component を選ぶと、その UI 種別だけを除外します。Dropdown の展開状態と項目 Toggle もまとめて除外されます。
+- RectTransform など同期対象外の Component を選ぶと、同じ GameObject 上のすべての同期 UI を除外します。
+- UI を破棄して再生成しても、同じ Binding ID または階層パスなら除外を維持します。階層を移動する動的 UI には `CanvasUiSyncBindingId` を設定してください。
+- 除外を解除する場合は、Inspector のリスト要素自体を削除してください。参照が Missing になっても保存済みの安定キーは維持されます。

@@ -305,8 +305,8 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             var peerBIncludedToggle = CreateRuntimeToggle(peerB.sync.transform, "IncludedToggle");
             var peerAExcludedToggle = CreateRuntimeToggle(peerA.sync.transform, "ExcludedToggle");
             var peerBExcludedToggle = CreateRuntimeToggle(peerB.sync.transform, "ExcludedToggle");
-            AssignExcludedComponents(peerA.sync, peerAExcludedToggle);
-            AssignExcludedComponents(peerB.sync, peerBExcludedToggle);
+            AssignExcludedComponents(peerA.sync, peerAExcludedToggle.GetComponent<RectTransform>());
+            AssignExcludedComponents(peerB.sync, peerBExcludedToggle.GetComponent<RectTransform>());
             InvokePrivate(peerA.sync, "RefreshBindingsIfHierarchyChanged", true);
             InvokePrivate(peerB.sync, "RefreshBindingsIfHierarchyChanged", true);
             yield return null;
@@ -327,6 +327,20 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBExcludedToggle.isOn, Is.False);
             Assert.That(HasBinding(peerA.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
             Assert.That(HasBinding(peerB.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+
+            Object.Destroy(peerAExcludedToggle.gameObject);
+            Object.Destroy(peerBExcludedToggle.gameObject);
+            yield return null;
+            var peerARecreatedExcludedToggle = CreateRuntimeToggle(peerA.sync.transform, "ExcludedToggle");
+            var peerBRecreatedExcludedToggle = CreateRuntimeToggle(peerB.sync.transform, "ExcludedToggle");
+            InvokePrivate(peerA.sync, "RefreshBindingsIfHierarchyChanged", true);
+            InvokePrivate(peerB.sync, "RefreshBindingsIfHierarchyChanged", true);
+
+            Assert.That(HasBinding(peerA.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+            Assert.That(HasBinding(peerB.sync, "DemoCanvas/ExcludedToggle:Toggle"), Is.False);
+            peerARecreatedExcludedToggle.isOn = true;
+            yield return WaitFrames(10);
+            Assert.That(peerBRecreatedExcludedToggle.isOn, Is.False);
         }
 
         [UnityTest]
@@ -1624,6 +1638,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             yield return WaitFrames(10);
             Assert.That(peerAIndicator.text, Is.EqualTo("CLICKED"));
             Assert.That(peerBIndicator.text, Is.EqualTo("READY"));
+            Assert.That(((IDictionary)GetPrivateField(peerB.sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(1));
 
             var peerBRuntimeButton = CreateRuntimeButton(peerB.sync.transform, peerBIndicator, "LateRuntimeButton");
             yield return WaitUntil(() => HasBinding(peerB.sync, "DemoCanvas/LateRuntimeButton:Button") && peerBIndicator.text == "CLICKED", 60);

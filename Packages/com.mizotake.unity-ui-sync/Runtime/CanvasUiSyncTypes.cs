@@ -18,6 +18,16 @@ namespace Mizotake.UnityUiSync
         public bool enabled = true;
     }
 
+    [Serializable]
+    internal sealed class CanvasUiSyncExclusion
+    {
+        [SerializeField] internal Component target;
+        [SerializeField, HideInInspector] internal Component capturedTarget;
+        [SerializeField, HideInInspector] internal string bindingId = string.Empty;
+        [SerializeField, HideInInspector] internal string hierarchyPath = string.Empty;
+        [SerializeField, HideInInspector] internal string componentType = string.Empty;
+    }
+
     [DisallowMultipleComponent]
     public sealed class CanvasUiSyncBindingId : MonoBehaviour
     {

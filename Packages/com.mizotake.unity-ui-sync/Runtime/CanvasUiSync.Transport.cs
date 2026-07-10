@@ -114,7 +114,7 @@ namespace Mizotake.UnityUiSync
                 var endpoint = owner.profile.peerEndpoints[index];
                 if (IsPeerTargetActive(owner, endpoint))
                 {
-                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.RequestSnapshotAddress, owner.profile.nodeId, owner.canvasId, owner.registryHash);
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.RequestSnapshotAddress, owner.profile.nodeId, owner.canvasId, owner.registryHash, owner.sessionId);
                 }
             }
 
@@ -141,8 +141,8 @@ namespace Mizotake.UnityUiSync
 
             foreach (var snapshotId in owner.expiredSnapshotIds)
             {
-                CanvasUiSyncProtocolService.HandleSnapshotTimeout(owner, snapshotId);
-                if (owner.ShouldVerboseLog())
+                var timedOut = CanvasUiSyncProtocolService.HandleSnapshotTimeout(owner, snapshotId);
+                if (timedOut && owner.ShouldVerboseLog())
                 {
                     var builder = owner.stringBuilderScratch;
                     builder.Length = 0;
@@ -238,9 +238,9 @@ namespace Mizotake.UnityUiSync
             for (var index = 0; index < owner.profile.peerEndpoints.Count; index++)
             {
                 var endpoint = owner.profile.peerEndpoints[index];
-                if (IsPeerTargetActive(owner, endpoint))
+                if (IsPeerEndpointConfigured(owner, endpoint))
                 {
-                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), owner.GetSessionUptimeSeconds());
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), owner.GetSessionUptimeSeconds(), owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions() ? 1 : 0);
                 }
             }
         }
@@ -341,7 +341,7 @@ namespace Mizotake.UnityUiSync
                     owner.client.maxQueueSize = Mathf.Max(owner.client.maxQueueSize, snapshotStateCount + 16);
                 }
 
-                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), snapshotStateCount, owner.GetSessionUptimeSeconds(), owner.snapshotSequence });
+                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks), snapshotStateCount, owner.GetSessionUptimeSeconds(), owner.snapshotSequence, owner.registryHash, owner.HasConfiguredExclusions() ? 1 : 0, owner.fullRegistryHash });
                 foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
                 {
                     sendState(values);
@@ -367,7 +367,7 @@ namespace Mizotake.UnityUiSync
             var count = 0;
             foreach (var pair in owner.bindings)
             {
-                if (pair.Value.ValueType != "Button" && owner.localStates.ContainsKey(pair.Key))
+                if (pair.Value.ValueType != "Button" && !owner.IsSyncIdExcluded(pair.Key) && owner.localStates.ContainsKey(pair.Key))
                 {
                     count++;
                 }
@@ -380,7 +380,7 @@ namespace Mizotake.UnityUiSync
         {
             foreach (var pair in owner.bindings)
             {
-                if (pair.Value.ValueType != "Button" && owner.localStates.TryGetValue(pair.Key, out var state))
+                if (pair.Value.ValueType != "Button" && !owner.IsSyncIdExcluded(pair.Key) && owner.localStates.TryGetValue(pair.Key, out var state))
                 {
                     yield return new object[] { snapshotId, owner.canvasId, pair.Key, pair.Value.ValueType, owner.SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId ?? string.Empty, state.Stamp.Sequence };
                 }
@@ -453,6 +453,11 @@ namespace Mizotake.UnityUiSync
         }
 
         internal static bool IsPeerTargetActive(CanvasUiSync owner, CanvasUiSyncRemoteEndpoint endpoint)
+        {
+            return IsPeerEndpointConfigured(owner, endpoint) && !owner.HasIgnoredPeerSession(endpoint.name);
+        }
+
+        private static bool IsPeerEndpointConfigured(CanvasUiSync owner, CanvasUiSyncRemoteEndpoint endpoint)
         {
             return endpoint != null && endpoint.enabled && endpoint.port > 0 && !string.IsNullOrWhiteSpace(endpoint.ipAddress) && !string.Equals(endpoint.name, owner.profile.nodeId, StringComparison.Ordinal);
         }

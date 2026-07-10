@@ -30,7 +30,8 @@ namespace Mizotake.UnityUiSync
         [SerializeField] internal string canvasIdOverride = string.Empty;
         [SerializeField] internal bool rescanOnEnable;
         [SerializeField] internal bool syncEnabled = true;
-        [SerializeField] internal List<Component> excludedComponents = new List<Component>();
+        [SerializeField, HideInInspector] internal List<Component> excludedComponents = new List<Component>();
+        [SerializeField] internal List<CanvasUiSyncExclusion> excludedUi = new List<CanvasUiSyncExclusion>();
 
         internal readonly Dictionary<string, UiSyncBinding> bindings = new Dictionary<string, UiSyncBinding>();
         internal readonly List<UiSyncBinding> continuousBindings = new List<UiSyncBinding>();
@@ -48,6 +49,7 @@ namespace Mizotake.UnityUiSync
         internal readonly Dictionary<string, bool> activeSnapshotCanInitializeLocalState = new Dictionary<string, bool>();
         internal readonly Dictionary<string, SnapshotReceiveState> snapshotReceiveStates = new Dictionary<string, SnapshotReceiveState>();
         internal readonly Dictionary<string, int> latestSnapshotSequenceBySourceSession = new Dictionary<string, int>();
+        internal readonly Dictionary<string, string> ignoredPeerSessions = new Dictionary<string, string>(StringComparer.Ordinal);
         internal readonly List<string> stateCacheKeysToRemove = new List<string>();
         internal readonly List<string> expiredSnapshotIds = new List<string>();
         internal readonly List<string> snapshotIdScratch = new List<string>();
@@ -72,6 +74,7 @@ namespace Mizotake.UnityUiSync
         internal readonly CanvasUiSyncBindingsService.BindingScanContext bindingScanContext = new CanvasUiSyncBindingsService.BindingScanContext();
         internal readonly StringBuilder stringBuilderScratch = new StringBuilder(256);
         internal string registryHash = string.Empty;
+        internal string fullRegistryHash = string.Empty;
         internal string canvasId = string.Empty;
         internal string sessionId = string.Empty;
         internal long sessionStartedAtTicks;
@@ -105,6 +108,7 @@ namespace Mizotake.UnityUiSync
         internal bool acceptRequestedSnapshotFromNewerPeer;
         internal bool resumeSynchronizationOnEnable;
         internal bool transportListenerSubscribed;
+        internal bool hasConfiguredExclusions;
         internal uOscServer server;
         internal uOscClient client;
         internal Canvas canvasComponent;
@@ -128,28 +132,43 @@ namespace Mizotake.UnityUiSync
             public float LastSeenAt { get; set; }
             public long SessionStartedAtTicks { get; set; }
             public float SessionUptimeSeconds { get; set; }
+            public string RegistryHash { get; set; } = string.Empty;
+            public string FullRegistryHash { get; set; } = string.Empty;
+            public bool HasExclusions { get; set; }
         }
 
         internal sealed class SnapshotReceiveState
         {
-            public SnapshotReceiveState(string sourceNodeId, string sourceSessionId, bool canInitializeLocalState, int expectedStateCount)
+            public SnapshotReceiveState(string sourceNodeId, string sourceSessionId, bool canInitializeLocalState, int expectedStateCount, string remoteRegistryHash, bool remoteHasExclusions, string remoteFullRegistryHash)
             {
                 SourceNodeId = sourceNodeId;
                 SourceSessionId = sourceSessionId;
                 CanInitializeLocalState = canInitializeLocalState;
                 ExpectedStateCount = expectedStateCount;
+                RemoteRegistryHash = remoteRegistryHash;
+                RemoteHasExclusions = remoteHasExclusions;
+                RemoteFullRegistryHash = remoteFullRegistryHash;
             }
 
             public string SourceNodeId { get; }
             public string SourceSessionId { get; }
             public bool CanInitializeLocalState { get; }
             public int ExpectedStateCount { get; }
+            public string RemoteRegistryHash { get; }
+            public bool RemoteHasExclusions { get; }
+            public string RemoteFullRegistryHash { get; }
             public HashSet<string> ReceivedSyncIds { get; } = new HashSet<string>(StringComparer.Ordinal);
             public HashSet<string> PendingSyncIds { get; } = new HashSet<string>(StringComparer.Ordinal);
             public bool EndReceived { get; set; }
             public float CompletionDeadline { get; set; } = float.PositiveInfinity;
 
-            public bool IsReady => EndReceived && (ExpectedStateCount < 0 || ReceivedSyncIds.Count >= ExpectedStateCount) && PendingSyncIds.Count == 0;
+            public bool HasCompletePayload => EndReceived && (ExpectedStateCount < 0 || ReceivedSyncIds.Count >= ExpectedStateCount);
+            public bool IsReady => HasCompletePayload && PendingSyncIds.Count == 0;
+
+            public bool IsRegistryCompatible(string localRegistryHash, string localFullRegistryHash, bool localHasExclusions)
+            {
+                return string.IsNullOrEmpty(RemoteRegistryHash) || string.Equals(RemoteRegistryHash, localRegistryHash, StringComparison.Ordinal) || (RemoteHasExclusions || localHasExclusions) && !string.IsNullOrEmpty(RemoteFullRegistryHash) && string.Equals(RemoteFullRegistryHash, localFullRegistryHash, StringComparison.Ordinal);
+            }
         }
 
         internal sealed class LocalStateRecord
@@ -274,14 +293,20 @@ namespace Mizotake.UnityUiSync
 
         internal readonly struct PendingButtonCommit
         {
-            public PendingButtonCommit(StateStamp stamp, float receivedAt)
+            public PendingButtonCommit(StateStamp stamp, float receivedAt, string sourceNodeId = null, string sourceSessionId = null, bool waitForRegistryMatch = false)
             {
                 Stamp = stamp;
                 ReceivedAt = receivedAt;
+                SourceNodeId = sourceNodeId;
+                SourceSessionId = sourceSessionId;
+                WaitForRegistryMatch = waitForRegistryMatch;
             }
 
             public StateStamp Stamp { get; }
             public float ReceivedAt { get; }
+            public string SourceNodeId { get; }
+            public string SourceSessionId { get; }
+            public bool WaitForRegistryMatch { get; }
         }
 
         internal readonly struct SuppressionScope : IDisposable
@@ -314,6 +339,7 @@ namespace Mizotake.UnityUiSync
             sessionStartedAtTicks = DateTime.UtcNow.Ticks;
             sessionStartedAtRealtime = Time.realtimeSinceStartup;
             canvasComponent = GetComponent<Canvas>();
+            RefreshExclusionRules();
             InitializeTransport();
             ScanBindings();
             InitializeLocalState();
@@ -416,6 +442,18 @@ namespace Mizotake.UnityUiSync
         public void DisableSync()
         {
             SetSyncEnabled(false);
+        }
+
+        public void RefreshExclusions()
+        {
+            RefreshExclusionRules(true);
+            PruneExcludedPendingCommits();
+            if (!initialized)
+            {
+                return;
+            }
+
+            RefreshBindingsIfHierarchyChanged(true);
         }
 
         private void Update()
@@ -555,14 +593,28 @@ namespace Mizotake.UnityUiSync
 
         internal void ApplyPendingRemoteCommits()
         {
+            var canApplyPendingSnapshotStates = CanvasUiSyncProtocolService.CanApplyPendingSnapshotStates(this);
+            stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteCommits)
             {
+                if (IsSyncIdExcluded(pair.Key))
+                {
+                    CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, pair.Key);
+                    stateCacheKeysToRemove.Add(pair.Key);
+                    continue;
+                }
+
                 if (!bindings.TryGetValue(pair.Key, out var binding))
                 {
                     continue;
                 }
 
                 var pending = pair.Value;
+                if (pending.IsSnapshot && !canApplyPendingSnapshotStates)
+                {
+                    continue;
+                }
+
                 if (!string.Equals(binding.ValueType, pending.ValueType, StringComparison.Ordinal))
                 {
                     HandleTypeMismatch(pair.Key, binding.ValueType, pending.ValueType);
@@ -593,6 +645,24 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteButtonCommits)
             {
+                if (IsSyncIdExcluded(pair.Key))
+                {
+                    stateCacheKeysToRemove.Add(pair.Key);
+                    continue;
+                }
+
+                if (CanvasUiSyncProtocolService.ShouldDiscardPendingButtonCommit(this, pair.Value))
+                {
+                    CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, pair.Key);
+                    stateCacheKeysToRemove.Add(pair.Key);
+                    continue;
+                }
+
+                if (!CanvasUiSyncProtocolService.CanApplyPendingButtonCommit(this, pair.Value))
+                {
+                    continue;
+                }
+
                 if (!bindings.ContainsKey(pair.Key))
                 {
                     continue;
@@ -604,6 +674,7 @@ namespace Mizotake.UnityUiSync
                 }
 
                 ApplyButtonCommit(binding, pair.Key, pair.Value.Stamp);
+                CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, pair.Key);
                 stateCacheKeysToRemove.Add(pair.Key);
             }
 
@@ -621,6 +692,7 @@ namespace Mizotake.UnityUiSync
             RemoveMissingBindingState(lastContinuousProposedValues);
             RemoveMissingBindingState(lastProposeTimes);
             RemoveMissingBindingState(deferredCommits);
+            PruneExcludedPendingCommits();
             PrunePendingRemoteCommits();
         }
 
@@ -721,20 +793,311 @@ namespace Mizotake.UnityUiSync
 
         internal bool IsComponentExcluded(Component component)
         {
-            if (component == null || excludedComponents == null || excludedComponents.Count == 0)
+            if (component == null)
             {
                 return false;
             }
 
-            for (var index = 0; index < excludedComponents.Count; index++)
+            if (excludedUi != null)
             {
-                if (excludedComponents[index] == component)
+                for (var index = 0; index < excludedUi.Count; index++)
                 {
-                    return true;
+                    var exclusion = excludedUi[index];
+                    if (exclusion == null)
+                    {
+                        continue;
+                    }
+
+                    if (TryReadExclusionLocator(exclusion, out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (excludedComponents != null)
+            {
+                for (var index = 0; index < excludedComponents.Count; index++)
+                {
+                    if (TryBuildExclusionLocator(excludedComponents[index], out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType))
+                    {
+                        return true;
+                    }
                 }
             }
 
             return false;
+        }
+
+        internal bool IsSyncIdExcluded(string syncId)
+        {
+            if (string.IsNullOrEmpty(syncId))
+            {
+                return false;
+            }
+
+            if (excludedUi != null)
+            {
+                for (var index = 0; index < excludedUi.Count; index++)
+                {
+                    var exclusion = excludedUi[index];
+                    if (exclusion == null)
+                    {
+                        continue;
+                    }
+
+                    if (TryReadExclusionLocator(exclusion, out var bindingId, out var hierarchyPath, out var componentType) && MatchesExcludedSyncId(syncId, bindingId, hierarchyPath, componentType))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (excludedComponents != null)
+            {
+                for (var index = 0; index < excludedComponents.Count; index++)
+                {
+                    if (TryBuildExclusionLocator(excludedComponents[index], out var bindingId, out var hierarchyPath, out var componentType) && MatchesExcludedSyncId(syncId, bindingId, hierarchyPath, componentType))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        internal bool HasConfiguredExclusions()
+        {
+            return hasConfiguredExclusions;
+        }
+
+        internal void RefreshExclusionRules(bool updateExistingLocators = false)
+        {
+            excludedUi ??= new List<CanvasUiSyncExclusion>();
+            if (excludedComponents != null && excludedComponents.Count > 0)
+            {
+                for (var index = 0; index < excludedComponents.Count; index++)
+                {
+                    var component = excludedComponents[index];
+                    if (component != null)
+                    {
+                        excludedUi.Add(new CanvasUiSyncExclusion { target = component });
+                    }
+                }
+
+                excludedComponents.Clear();
+            }
+
+            for (var index = 0; index < excludedUi.Count; index++)
+            {
+                var exclusion = excludedUi[index];
+                if (exclusion == null)
+                {
+                    exclusion = new CanvasUiSyncExclusion();
+                    excludedUi[index] = exclusion;
+                }
+
+                if (exclusion.target == null || HasExclusionLocator(exclusion) && (!updateExistingLocators || exclusion.target == exclusion.capturedTarget))
+                {
+                    continue;
+                }
+
+                if (!TryBuildExclusionLocator(exclusion.target, out var bindingId, out var hierarchyPath, out var componentType))
+                {
+                    continue;
+                }
+
+                exclusion.bindingId = bindingId;
+                exclusion.hierarchyPath = hierarchyPath;
+                exclusion.componentType = componentType;
+                exclusion.capturedTarget = exclusion.target;
+            }
+
+            hasConfiguredExclusions = false;
+            for (var index = 0; index < excludedUi.Count; index++)
+            {
+                if (HasExclusionLocator(excludedUi[index]))
+                {
+                    hasConfiguredExclusions = true;
+                    break;
+                }
+            }
+        }
+
+        internal void PruneExcludedPendingCommits()
+        {
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteCommits)
+            {
+                if (IsSyncIdExcluded(pair.Key))
+                {
+                    stateCacheKeysToRemove.Add(pair.Key);
+                }
+            }
+
+            foreach (var pair in snapshotReceiveStates)
+            {
+                foreach (var syncId in pair.Value.PendingSyncIds)
+                {
+                    if (IsSyncIdExcluded(syncId) && !stateCacheKeysToRemove.Contains(syncId))
+                    {
+                        stateCacheKeysToRemove.Add(syncId);
+                    }
+                }
+            }
+
+            for (var index = 0; index < stateCacheKeysToRemove.Count; index++)
+            {
+                var syncId = stateCacheKeysToRemove[index];
+                pendingRemoteCommits.Remove(syncId);
+                CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, syncId);
+            }
+
+            stateCacheKeysToRemove.Clear();
+            foreach (var pair in pendingRemoteButtonCommits)
+            {
+                if (IsSyncIdExcluded(pair.Key))
+                {
+                    stateCacheKeysToRemove.Add(pair.Key);
+                }
+            }
+
+            for (var index = 0; index < stateCacheKeysToRemove.Count; index++)
+            {
+                pendingRemoteButtonCommits.Remove(stateCacheKeysToRemove[index]);
+            }
+
+            stateCacheKeysToRemove.Clear();
+        }
+
+        internal void DiscardPendingExcludedSyncId(string syncId)
+        {
+            pendingRemoteCommits.Remove(syncId);
+            pendingRemoteButtonCommits.Remove(syncId);
+            CanvasUiSyncProtocolService.HandlePendingSnapshotStateApplied(this, syncId);
+        }
+
+        private bool TryReadExclusionLocator(CanvasUiSyncExclusion exclusion, out string bindingId, out string hierarchyPath, out string componentType)
+        {
+            bindingId = exclusion.bindingId;
+            hierarchyPath = exclusion.hierarchyPath;
+            componentType = exclusion.componentType;
+            return HasExclusionLocator(exclusion) || TryBuildExclusionLocator(exclusion.target, out bindingId, out hierarchyPath, out componentType);
+        }
+
+        private static bool HasExclusionLocator(CanvasUiSyncExclusion exclusion)
+        {
+            return exclusion != null && (!string.IsNullOrWhiteSpace(exclusion.bindingId) || !string.IsNullOrEmpty(exclusion.hierarchyPath));
+        }
+
+        private bool TryBuildExclusionLocator(Component target, out string bindingId, out string hierarchyPath, out string componentType)
+        {
+            bindingId = string.Empty;
+            hierarchyPath = string.Empty;
+            componentType = GetSupportedComponentType(target);
+            if (target == null || target.transform == null || target.transform != transform && !target.transform.IsChildOf(transform))
+            {
+                return false;
+            }
+
+            var explicitBindingId = ReadExplicitBindingId(target);
+            if (!string.IsNullOrWhiteSpace(explicitBindingId))
+            {
+                bindingId = explicitBindingId;
+                return true;
+            }
+
+            hierarchyPath = CanvasUiSyncBindingsService.BuildPath(this, target.transform);
+            return !string.IsNullOrEmpty(hierarchyPath);
+        }
+
+        private bool MatchesExclusionLocator(Component component, string bindingId, string hierarchyPath, string excludedComponentType)
+        {
+            var componentBindingId = ReadExplicitBindingId(component);
+            if (!string.IsNullOrWhiteSpace(bindingId))
+            {
+                return string.Equals(componentBindingId, bindingId, StringComparison.Ordinal) && IsComponentTypeExcluded(component, excludedComponentType);
+            }
+
+            if (string.IsNullOrEmpty(hierarchyPath) || !string.IsNullOrWhiteSpace(componentBindingId))
+            {
+                return false;
+            }
+
+            return string.Equals(CanvasUiSyncBindingsService.BuildPath(this, component.transform), hierarchyPath, StringComparison.Ordinal) && IsComponentTypeExcluded(component, excludedComponentType);
+        }
+
+        private bool MatchesExcludedSyncId(string syncId, string bindingId, string hierarchyPath, string excludedComponentType)
+        {
+            var locator = !string.IsNullOrWhiteSpace(bindingId) ? bindingId : hierarchyPath;
+            if (string.IsNullOrEmpty(locator))
+            {
+                return false;
+            }
+
+            var prefix = canvasId + "/" + locator + ":";
+            return syncId.StartsWith(prefix, StringComparison.Ordinal) && IsBindingTypeExcluded(syncId.Substring(prefix.Length), excludedComponentType);
+        }
+
+        private static bool IsComponentTypeExcluded(Component component, string excludedComponentType)
+        {
+            return string.IsNullOrEmpty(excludedComponentType) || string.Equals(GetSupportedComponentType(component), excludedComponentType, StringComparison.Ordinal);
+        }
+
+        private static bool IsBindingTypeExcluded(string bindingType, string excludedComponentType)
+        {
+            if (string.IsNullOrEmpty(excludedComponentType) || string.Equals(bindingType, excludedComponentType, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!string.Equals(excludedComponentType, "Dropdown", StringComparison.Ordinal) && !string.Equals(excludedComponentType, "TMP_Dropdown", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return string.Equals(bindingType, excludedComponentType + "Expanded", StringComparison.Ordinal) || bindingType.StartsWith(excludedComponentType + "ItemToggle[", StringComparison.Ordinal);
+        }
+
+        private static string GetSupportedComponentType(Component component)
+        {
+            if (component is Toggle)
+            {
+                return "Toggle";
+            }
+
+            if (component is Slider)
+            {
+                return "Slider";
+            }
+
+            if (component is Scrollbar)
+            {
+                return "Scrollbar";
+            }
+
+            if (component is Dropdown)
+            {
+                return "Dropdown";
+            }
+
+            if (component is TMP_Dropdown)
+            {
+                return "TMP_Dropdown";
+            }
+
+            if (component is InputField)
+            {
+                return "InputField";
+            }
+
+            if (component is TMP_InputField)
+            {
+                return "TMP_InputField";
+            }
+
+            return component is Button ? "Button" : string.Empty;
         }
 
         internal bool ShouldDebugLog()
@@ -948,6 +1311,26 @@ namespace Mizotake.UnityUiSync
             return CanvasUiSyncProtocolService.ShouldIgnoreIncomingPeer(this, nodeId);
         }
 
+        internal bool IsPeerSessionIgnored(string nodeId, string peerSessionId)
+        {
+            return CanvasUiSyncProtocolService.IsPeerSessionIgnored(this, nodeId, peerSessionId);
+        }
+
+        internal bool HasIgnoredPeerSession(string nodeId)
+        {
+            return CanvasUiSyncProtocolService.HasIgnoredPeerSession(this, nodeId);
+        }
+
+        internal bool CanApplyPendingSnapshotStates()
+        {
+            return CanvasUiSyncProtocolService.CanApplyPendingSnapshotStates(this);
+        }
+
+        internal void HandleBindingsRefreshed()
+        {
+            CanvasUiSyncProtocolService.HandleBindingsRefreshed(this);
+        }
+
         internal StateStamp CreateLocalStamp()
         {
             return CanvasUiSyncProtocolService.CreateLocalStamp(this);
@@ -1038,6 +1421,11 @@ namespace Mizotake.UnityUiSync
             CanvasUiSyncStateService.ApplyRemoteState(this, syncId, valueType, value, stamp, isSnapshot, canInitializeLocalState);
         }
 
+        internal void ApplyRemoteState(string syncId, string valueType, object value, StateStamp stamp, bool isSnapshot, bool canInitializeLocalState, bool deferSnapshotUntilRegistryMatches)
+        {
+            CanvasUiSyncStateService.ApplyRemoteState(this, syncId, valueType, value, stamp, isSnapshot, canInitializeLocalState, deferSnapshotUntilRegistryMatches);
+        }
+
         internal void FlushPendingCommits(float now)
         {
             CanvasUiSyncStateService.FlushPendingCommits(this, now);
@@ -1110,11 +1498,21 @@ namespace Mizotake.UnityUiSync
 
         internal void BroadcastCommit(string syncId, string valueType, object value, StateStamp stamp)
         {
+            if (IsSyncIdExcluded(syncId))
+            {
+                return;
+            }
+
             CanvasUiSyncTransportService.BroadcastCommit(this, syncId, valueType, value, stamp);
         }
 
         internal void BroadcastButton(string syncId, StateStamp stamp)
         {
+            if (IsSyncIdExcluded(syncId))
+            {
+                return;
+            }
+
             CanvasUiSyncTransportService.BroadcastButton(this, syncId, stamp);
         }
 

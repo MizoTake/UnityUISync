@@ -419,6 +419,368 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void ScanBindings_ExcludedRectTransform_ExcludesUiOnSameGameObject()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>());
+
+            InvokePrivate(sync, "Awake");
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/ExcludedToggle:Toggle"), Is.False);
+        }
+
+        [Test]
+        public void ExcludedToggle_DoesNotExcludeButtonSyncIdAtSameLocator()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sharedUiObject = new GameObject("SharedUi", typeof(RectTransform), typeof(Toggle));
+            sharedUiObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignExcludedComponents(sync, sharedUiObject.GetComponent<Toggle>());
+
+            InvokePrivate(sync, "Awake");
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/SharedUi:Toggle"), Is.False);
+            Assert.That((bool)InvokePrivate(sync, "IsSyncIdExcluded", "OperationCanvas/SharedUi:Button"), Is.False);
+        }
+
+        [Test]
+        public void Awake_LegacyExcludedComponent_MigratesToStableExclusion()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignLegacyExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+
+            InvokePrivate(sync, "Awake");
+
+            Assert.That(((IList)GetPrivateField(sync, "excludedComponents")).Count, Is.EqualTo(0));
+            Assert.That(((IList)GetPrivateField(sync, "excludedUi")).Count, Is.EqualTo(1));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/ExcludedToggle:Toggle"), Is.False);
+        }
+
+        [Test]
+        public void LocalStateChange_ExcludedAfterBindingCreation_DoesNotBroadcastBeforeRescan()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.minimumCommitBroadcastIntervalSeconds = 0f;
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings"))["OperationCanvas/ExcludedToggle:Toggle"];
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>());
+
+            InvokePrivate(sync, "OnLocalStateChanged", binding, true, false);
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void RemoteStateChange_ExcludedAfterBindingCreation_DoesNotApplyBeforeRescan()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedToggle = excludedToggleObject.GetComponent<Toggle>();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>());
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/ExcludedToggle:Toggle", "Toggle", true, 100L, "PeerB", 1);
+
+            Assert.That(excludedToggle.isOn, Is.False);
+        }
+
+        [Test]
+        public void RemoteStateChange_StableExcludedPath_DoesNotQueuePendingCommit()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/ExcludedToggle:Toggle", "Toggle", true, 100L, "PeerB", 1);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Contains("OperationCanvas/ExcludedToggle:Toggle"), Is.False);
+        }
+
+        [Test]
+        public void ExcludedStateAndButton_DoNotQueueOrApplyAfterExclusionIsRemoved()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedToggle = excludedToggleObject.GetComponent<Toggle>();
+            var excludedButtonObject = new GameObject("ExcludedButton", typeof(RectTransform), typeof(Button));
+            excludedButtonObject.transform.SetParent(canvasObject.transform, false);
+            var excludedButton = excludedButtonObject.GetComponent<Button>();
+            var buttonInvocationCount = 0;
+            excludedButton.onClick.AddListener(() => buttonInvocationCount++);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>(), excludedButtonObject.GetComponent<RectTransform>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/ExcludedToggle:Toggle", "Toggle", true, 100L, "PeerB", 1);
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/ExcludedButton:Button", 100L, "PeerB", 1);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(0));
+            ((IList)GetPrivateField(sync, "excludedUi")).Clear();
+            sync.RefreshExclusions();
+            Assert.That(excludedToggle.isOn, Is.False);
+            Assert.That(buttonInvocationCount, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/ExcludedToggle:Toggle"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/ExcludedButton:Button"), Is.True);
+        }
+
+        [Test]
+        public void PendingStateAndButton_AreDiscardedWhenTargetsBecomeExcluded()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/LateToggle:Toggle", "Toggle", true, 100L, "PeerB", 1);
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/LateButton:Button", 100L, "PeerB", 1);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(1));
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(1));
+            var lateToggleObject = new GameObject("LateToggle", typeof(RectTransform), typeof(Toggle));
+            lateToggleObject.transform.SetParent(canvasObject.transform, false);
+            var lateToggle = lateToggleObject.GetComponent<Toggle>();
+            var lateButtonObject = new GameObject("LateButton", typeof(RectTransform), typeof(Button));
+            lateButtonObject.transform.SetParent(canvasObject.transform, false);
+            var buttonInvocationCount = 0;
+            lateButtonObject.GetComponent<Button>().onClick.AddListener(() => buttonInvocationCount++);
+            AssignExcludedComponents(sync, lateToggleObject.GetComponent<RectTransform>(), lateButtonObject.GetComponent<RectTransform>());
+
+            sync.RefreshExclusions();
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/LateToggle:Toggle"), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/LateButton:Button"), Is.False);
+            ((IList)GetPrivateField(sync, "excludedUi")).Clear();
+            sync.RefreshExclusions();
+            Assert.That(lateToggle.isOn, Is.False);
+            Assert.That(buttonInvocationCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ButtonCommit_ExcludedAfterBindingCreation_DoesNotSendOrApplyBeforeRescan()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedButtonObject = new GameObject("ExcludedButton", typeof(RectTransform), typeof(Button));
+            excludedButtonObject.transform.SetParent(canvasObject.transform, false);
+            var excludedButton = excludedButtonObject.GetComponent<Button>();
+            var buttonInvocationCount = 0;
+            excludedButton.onClick.AddListener(() => buttonInvocationCount++);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var binding = ((IDictionary)GetPrivateField(sync, "bindings"))["OperationCanvas/ExcludedButton:Button"];
+            AssignExcludedComponents(sync, excludedButtonObject.GetComponent<RectTransform>());
+
+            InvokePrivate(sync, "OnLocalButtonClicked", binding);
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/ExcludedButton:Button", 100L, "PeerB", 1);
+
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(0));
+            Assert.That(buttonInvocationCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void SnapshotState_ExcludedPath_CompletesWithoutPendingUi()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<RectTransform>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/ExcludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+            Assert.That(((IDictionary)GetPrivateField(sync, "snapshotReceiveStates")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void SnapshotState_RegistryMismatchWithLocalExclusion_StillAppliesCommonUi()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var includedToggleObject = new GameObject("IncludedToggle", typeof(RectTransform), typeof(Toggle));
+            includedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 1f, 1, "different-registry", 0, GetPrivateField(sync, "fullRegistryHash"));
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/IncludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            Assert.That(includedToggleObject.GetComponent<Toggle>().isOn, Is.True);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "ignoredPeerSessions")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void SnapshotState_RegistryMismatchWithRemoteExclusion_StillAppliesCommonUi()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var includedToggleObject = new GameObject("IncludedToggle", typeof(RectTransform), typeof(Toggle));
+            includedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 1f, 1, "different-registry", 1, GetPrivateField(sync, "fullRegistryHash"));
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/IncludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            Assert.That(includedToggleObject.GetComponent<Toggle>().isOn, Is.True);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "ignoredPeerSessions")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void SnapshotState_EndBeforeExcludedFinalState_AppliesBufferedCommonUi()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var includedToggleObject = new GameObject("IncludedToggle", typeof(RectTransform), typeof(Toggle));
+            includedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 2, 1f, 1, "different-registry", 1, GetPrivateField(sync, "fullRegistryHash"));
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/IncludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/ExcludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+
+            Assert.That(includedToggleObject.GetComponent<Toggle>().isOn, Is.True);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.True);
+        }
+
+        [Test]
+        public void SnapshotState_RegistryMismatchBeyondConfiguredExclusion_IgnoresPeerSession()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var includedToggleObject = new GameObject("IncludedToggle", typeof(RectTransform), typeof(Toggle));
+            includedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            new GameObject("ExtraLocalToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 1f, 1, "different-registry", 1, "different-full-registry");
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/IncludedToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            Assert.That(includedToggleObject.GetComponent<Toggle>().isOn, Is.False);
+            ((IDictionary)GetPrivateField(sync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+            InvokePrivate(sync, "TickSnapshotCleanup", Time.unscaledTime);
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.True);
+        }
+
+        [Test]
+        public void ScanBindings_ExcludedHierarchyPath_RemainsExcludedAfterRecreation()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+            InvokePrivate(sync, "Awake");
+            var poolObject = new GameObject("Pool");
+            excludedToggleObject.transform.SetParent(poolObject.transform, false);
+            InvokePrivate(sync, "RefreshBindingsIfHierarchyChanged", true);
+            Object.DestroyImmediate(excludedToggleObject);
+            new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+
+            InvokePrivate(sync, "RefreshBindingsIfHierarchyChanged", true);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/ExcludedToggle:Toggle"), Is.False);
+        }
+
+        [Test]
+        public void ScanBindings_ExcludedBindingId_RemainsExcludedAfterRecreationAtDifferentPath()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var originalParent = new GameObject("OriginalParent", typeof(RectTransform));
+            originalParent.transform.SetParent(canvasObject.transform, false);
+            var replacementParent = new GameObject("ReplacementParent", typeof(RectTransform));
+            replacementParent.transform.SetParent(canvasObject.transform, false);
+            var excludedToggleObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            excludedToggleObject.transform.SetParent(originalParent.transform, false);
+            AddBindingId(excludedToggleObject, "StableExcludedToggle");
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            AssignExcludedComponents(sync, excludedToggleObject.GetComponent<Toggle>());
+            InvokePrivate(sync, "Awake");
+            Object.DestroyImmediate(excludedToggleObject);
+            var oldPathReplacementObject = new GameObject("ExcludedToggle", typeof(RectTransform), typeof(Toggle));
+            oldPathReplacementObject.transform.SetParent(originalParent.transform, false);
+            var replacementToggleObject = new GameObject("ReplacementToggle", typeof(RectTransform), typeof(Toggle));
+            replacementToggleObject.transform.SetParent(replacementParent.transform, false);
+            AddBindingId(replacementToggleObject, "StableExcludedToggle");
+
+            InvokePrivate(sync, "RefreshBindingsIfHierarchyChanged", true);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/StableExcludedToggle:Toggle"), Is.False);
+            Assert.That(((IDictionary)GetPrivateField(sync, "bindings")).Contains("OperationCanvas/OriginalParent/ExcludedToggle:Toggle"), Is.True);
+        }
+
+        [Test]
         public void ScanBindings_DropdownOptionToggles_AreNotPolledPerFrame()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -1209,6 +1571,306 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         [Test]
+        public void SendSnapshotCore_AnnouncesRegistryHash()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sync, "Awake");
+            object[] beginValues = null;
+
+            InvokePrivate(sync, "SendSnapshotCore", new global::System.Action<object[]>(values => beginValues = values), new global::System.Action<object[]>(values => { }), new global::System.Action<object[]>(values => { }));
+
+            Assert.That(beginValues, Is.Not.Null);
+            Assert.That(beginValues.Length, Is.GreaterThanOrEqualTo(9));
+            Assert.That(beginValues[8], Is.EqualTo(GetPrivateField(sync, "registryHash")));
+            Assert.That(beginValues.Length, Is.GreaterThanOrEqualTo(11));
+            Assert.That(beginValues[10], Is.EqualTo(GetPrivateField(sync, "fullRegistryHash")));
+        }
+
+        [Test]
+        public void HandleSnapshotTimeout_CompletePayloadWithDifferentRegistry_IgnoresPeerSessionWithoutPartialApply()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            toggle.SetIsOnWithoutNotify(false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            const string syncId = "OperationCanvas/PowerToggle:Toggle";
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 10f, 1, "different-registry");
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", syncId, "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            Assert.That(toggle.isOn, Is.False);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.False);
+
+            ((IDictionary)GetPrivateField(sync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+            InvokePrivate(sync, "TickSnapshotCleanup", Time.unscaledTime);
+
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.True);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.True);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", syncId, "Toggle", true, 1L, "PeerB", 1);
+            Assert.That(toggle.isOn, Is.False);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionC", "OperationCanvas", syncId, "Toggle", true, 2L, "PeerB", 2);
+            Assert.That(toggle.isOn, Is.False);
+        }
+
+        [Test]
+        public void HandleSnapshotTimeout_RemovesBufferedCommitOutsideAnnouncedSnapshotIds()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 10f, 1, "different-registry");
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/PowerToggle:Toggle", "Toggle", false, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/LateToggle:Toggle", "Toggle", true, 1L, "PeerB", 1);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(2));
+            ((IDictionary)GetPrivateField(sync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+
+            InvokePrivate(sync, "TickSnapshotCleanup", Time.unscaledTime);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteCommits")).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void HandleSnapshotTimeout_RegistryMismatchRemovesButtonBufferedBeforeSnapshot()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 1f, "different-registry", "different-full-registry", 0);
+            InvokePrivate(sync, "HandleCommitButton", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/LateButton:Button", 1L, "PeerB", 1);
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(1));
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 0, 10f, 1, "different-registry", 0, "different-full-registry");
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            ((IDictionary)GetPrivateField(sync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+
+            InvokePrivate(sync, "TickSnapshotCleanup", Time.unscaledTime);
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "pendingRemoteButtonCommits")).Count, Is.EqualTo(0));
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.True);
+        }
+
+        [Test]
+        public void HandleSnapshotTimeout_MissingAnnouncedState_DoesNotIgnorePeerSession()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            var registryHash = (string)GetPrivateField(sync, "registryHash");
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 2, 10f, 1, registryHash);
+            InvokePrivate(sync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", "OperationCanvas/PowerToggle:Toggle", "Toggle", true, 0L, "", 0);
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            ((IDictionary)GetPrivateField(sync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+
+            InvokePrivate(sync, "TickSnapshotCleanup", Time.unscaledTime);
+
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.False);
+            Assert.That((bool)GetPrivateField(sync, "hasSnapshot"), Is.False);
+        }
+
+        [Test]
+        public void HandleEndSnapshot_DifferentRegistryThatMatchesAfterDynamicGeneration_AppliesAndCompletes()
+        {
+            var sourceCanvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(sourceCanvasObject.transform, false);
+            var sourceSync = sourceCanvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sourceSync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sourceSync, "Awake");
+            var sourceRegistryHash = (string)GetPrivateField(sourceSync, "registryHash");
+
+            var targetCanvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var targetSync = targetCanvasObject.AddComponent<CanvasUiSync>();
+            var targetProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            targetProfile.allowedPeers.Add("PeerB");
+            AssignProfile(targetSync, targetProfile);
+            InvokePrivate(targetSync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeToggle:Toggle";
+            InvokePrivate(targetSync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 10f, 1, sourceRegistryHash);
+            InvokePrivate(targetSync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", syncId, "Toggle", true, 0L, "", 0);
+            InvokePrivate(targetSync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+
+            var runtimeToggleObject = new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle));
+            runtimeToggleObject.transform.SetParent(targetCanvasObject.transform, false);
+            var runtimeToggle = runtimeToggleObject.GetComponent<Toggle>();
+            runtimeToggle.SetIsOnWithoutNotify(false);
+            InvokePrivate(targetSync, "ScanBindings");
+            InvokePrivate(targetSync, "InitializeLocalState");
+
+            Assert.That(runtimeToggle.isOn, Is.True);
+            Assert.That((bool)GetPrivateField(targetSync, "hasSnapshot"), Is.True);
+            Assert.That((bool)InvokePrivate(targetSync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.False);
+        }
+
+        [Test]
+        public void IgnoredPeerSession_StopsSynchronizationTrafficButAcceptsNewSessionHello()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeId = "PeerA";
+            profile.allowedPeers.Add("PeerB");
+            var endpoint = new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true };
+            profile.peerEndpoints.Add(endpoint);
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            ((IDictionary)GetPrivateField(sync, "ignoredPeerSessions"))["PeerB"] = "SessionB";
+            SetPrivateField(sync, "sentMessageCount", 0);
+
+            Assert.That((bool)InvokePrivate(sync, "IsPeerTargetActive", endpoint), Is.False);
+            InvokePrivate(sync, "SendHello");
+            Assert.That((int)GetPrivateField(sync, "sentMessageCount"), Is.EqualTo(1));
+
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionC", 200L, 1f);
+
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.False);
+            Assert.That((bool)InvokePrivate(sync, "IsPeerTargetActive", endpoint), Is.True);
+        }
+
+        [Test]
+        public void HandleHello_ChangedRegistryHash_ReplacesStaleSnapshotRequest()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(canvasObject.transform, false);
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.nodeId = "PeerA";
+            profile.allowedPeers.Add("PeerB");
+            profile.peerEndpoints.Add(new CanvasUiSyncRemoteEndpoint { name = "PeerB", ipAddress = "127.0.0.1", port = 9001, enabled = true });
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleBeginSnapshot", "snapshot-old", "OperationCanvas", "PeerB", "SessionB", 100L, 0, 10f, 1, "old-registry");
+            InvokePrivate(sync, "HandleEndSnapshot", "snapshot-old", "OperationCanvas", "PeerB", "SessionB", 100L);
+            Assert.That(((IDictionary)GetPrivateField(sync, "snapshotReceiveStates")).Contains("snapshot-old"), Is.True);
+
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 1f, GetPrivateField(sync, "registryHash"));
+
+            Assert.That(((IDictionary)GetPrivateField(sync, "snapshotReceiveStates")).Contains("snapshot-old"), Is.False);
+            Assert.That((int)GetPrivateField(sync, "snapshotRetryCount"), Is.GreaterThanOrEqualTo(1));
+        }
+
+        [Test]
+        public void HandleSnapshotTimeout_DynamicUiCreatedBeforeDeadline_FinalRescanCompletesWithoutIgnoringPeer()
+        {
+            var sourceCanvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle)).transform.SetParent(sourceCanvasObject.transform, false);
+            var sourceSync = sourceCanvasObject.AddComponent<CanvasUiSync>();
+            AssignProfile(sourceSync, ScriptableObject.CreateInstance<CanvasUiSyncProfile>());
+            InvokePrivate(sourceSync, "Awake");
+            var sourceRegistryHash = (string)GetPrivateField(sourceSync, "registryHash");
+
+            var targetCanvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var targetSync = targetCanvasObject.AddComponent<CanvasUiSync>();
+            var targetProfile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            targetProfile.allowedPeers.Add("PeerB");
+            AssignProfile(targetSync, targetProfile);
+            InvokePrivate(targetSync, "Awake");
+
+            const string syncId = "OperationCanvas/RuntimeToggle:Toggle";
+            InvokePrivate(targetSync, "HandleBeginSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L, 1, 10f, 1, sourceRegistryHash);
+            InvokePrivate(targetSync, "HandleSnapshotState", "snapshot-1", "OperationCanvas", syncId, "Toggle", true, 0L, "", 0);
+            InvokePrivate(targetSync, "HandleEndSnapshot", "snapshot-1", "OperationCanvas", "PeerB", "SessionB", 100L);
+            var runtimeToggleObject = new GameObject("RuntimeToggle", typeof(RectTransform), typeof(Toggle));
+            runtimeToggleObject.transform.SetParent(targetCanvasObject.transform, false);
+            runtimeToggleObject.GetComponent<Toggle>().SetIsOnWithoutNotify(false);
+            ((IDictionary)GetPrivateField(targetSync, "activeSnapshotIds"))["snapshot-1"] = Time.unscaledTime - 1f;
+
+            InvokePrivate(targetSync, "TickSnapshotCleanup", Time.unscaledTime);
+
+            Assert.That(runtimeToggleObject.GetComponent<Toggle>().isOn, Is.True);
+            Assert.That((bool)GetPrivateField(targetSync, "hasSnapshot"), Is.True);
+            Assert.That((bool)InvokePrivate(targetSync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.False);
+        }
+
+        [Test]
+        public void HandleCommitState_DifferentFromEstablishedPeerSession_IsIgnored()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 1f, GetPrivateField(sync, "registryHash"));
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "UnexpectedSession", "OperationCanvas", "OperationCanvas/PowerToggle:Toggle", "Toggle", true, 1L, "PeerB", 1);
+            Assert.That(toggle.isOn, Is.False);
+
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/PowerToggle:Toggle", "Toggle", true, 2L, "PeerB", 2);
+            Assert.That(toggle.isOn, Is.True);
+        }
+
+        [Test]
+        public void HandleCommitState_RegistryMismatchKnownFromHelloBeforeSnapshot_IsIgnored()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
+            toggleObject.transform.SetParent(canvasObject.transform, false);
+            var toggle = toggleObject.GetComponent<Toggle>();
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 1f, "different-registry", "different-full-registry", 0);
+            InvokePrivate(sync, "HandleCommitState", "PeerB", "SessionB", "OperationCanvas", "OperationCanvas/PowerToggle:Toggle", "Toggle", true, 1L, "PeerB", 1);
+
+            Assert.That(toggle.isOn, Is.False);
+        }
+
+        [Test]
+        public void HandleHello_DelayedOlderSession_DoesNotReplaceNewerSession()
+        {
+            var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
+            var sync = canvasObject.AddComponent<CanvasUiSync>();
+            var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
+            profile.allowedPeers.Add("PeerB");
+            AssignProfile(sync, profile);
+            InvokePrivate(sync, "Awake");
+            var registryHash = GetPrivateField(sync, "registryHash");
+            var fullRegistryHash = GetPrivateField(sync, "fullRegistryHash");
+
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 1f, registryHash, fullRegistryHash, 0);
+            ((IDictionary)GetPrivateField(sync, "ignoredPeerSessions"))["PeerB"] = "SessionB";
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionC", 200L, 1f, registryHash, fullRegistryHash, 0);
+            InvokePrivate(sync, "HandleHello", "PeerB", profile.protocolVersion, "OperationCanvas", "SessionB", 100L, 2f, registryHash, fullRegistryHash, 0);
+
+            var node = ((IDictionary)GetPrivateField(sync, "nodes"))["PeerB"];
+            Assert.That(node.GetType().GetProperty("SessionId").GetValue(node), Is.EqualTo("SessionC"));
+            Assert.That((bool)InvokePrivate(sync, "IsPeerSessionIgnored", "PeerB", "SessionB"), Is.False);
+        }
+
+        [Test]
         public void HandleSnapshotState_UnknownSyncId_TimesOutAndKeepsSynchronizationIncomplete()
         {
             var canvasObject = new GameObject("OperationCanvas", typeof(Canvas));
@@ -1879,6 +2541,20 @@ namespace Mizotake.UnityUiSync.Tests.Editor
         }
 
         private static void AssignExcludedComponents(CanvasUiSync sync, params Component[] components)
+        {
+            var serializedObject = new SerializedObject(sync);
+            var excludedUiProperty = serializedObject.FindProperty("excludedUi");
+            Assert.That(excludedUiProperty, Is.Not.Null);
+            excludedUiProperty.arraySize = components.Length;
+            for (var index = 0; index < components.Length; index++)
+            {
+                excludedUiProperty.GetArrayElementAtIndex(index).FindPropertyRelative("target").objectReferenceValue = components[index];
+            }
+
+            serializedObject.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void AssignLegacyExcludedComponents(CanvasUiSync sync, params Component[] components)
         {
             var serializedObject = new SerializedObject(sync);
             var excludedComponentsProperty = serializedObject.FindProperty("excludedComponents");
