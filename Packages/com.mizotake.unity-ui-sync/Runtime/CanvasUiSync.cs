@@ -45,6 +45,7 @@ namespace Mizotake.UnityUiSync
         internal readonly Dictionary<string, DeferredStateCommit> pendingRemoteCommits = new Dictionary<string, DeferredStateCommit>();
         internal readonly Dictionary<string, PendingButtonCommit> pendingRemoteButtonCommits = new Dictionary<string, PendingButtonCommit>();
         internal readonly Dictionary<string, float> activeSnapshotIds = new Dictionary<string, float>();
+        internal readonly Dictionary<string, bool> activeSnapshotCanInitializeLocalState = new Dictionary<string, bool>();
         internal readonly List<string> stateCacheKeysToRemove = new List<string>();
         internal readonly List<string> expiredSnapshotIds = new List<string>();
         internal readonly List<string> expiredNodeIds = new List<string>();
@@ -70,6 +71,7 @@ namespace Mizotake.UnityUiSync
         internal string registryHash = string.Empty;
         internal string canvasId = string.Empty;
         internal string sessionId = string.Empty;
+        internal long sessionStartedAtTicks;
         internal float nextHelloTime;
         internal float nextSnapshotRequestTime;
         internal float nextPeriodicResyncTime;
@@ -104,16 +106,18 @@ namespace Mizotake.UnityUiSync
 
         internal sealed class NodeState
         {
-            public NodeState(string nodeId, string sessionId, float lastSeenAt)
+            public NodeState(string nodeId, string sessionId, float lastSeenAt, long sessionStartedAtTicks = 0L)
             {
                 NodeId = nodeId;
                 SessionId = sessionId;
                 LastSeenAt = lastSeenAt;
+                SessionStartedAtTicks = sessionStartedAtTicks;
             }
 
             public string NodeId { get; }
             public string SessionId { get; set; }
             public float LastSeenAt { get; set; }
+            public long SessionStartedAtTicks { get; set; }
         }
 
         internal sealed class LocalStateRecord
@@ -269,6 +273,7 @@ namespace Mizotake.UnityUiSync
 
             canvasId = string.IsNullOrWhiteSpace(canvasIdOverride) ? gameObject.name : canvasIdOverride.Trim();
             sessionId = Guid.NewGuid().ToString("N");
+            sessionStartedAtTicks = DateTime.UtcNow.Ticks;
             canvasComponent = GetComponent<Canvas>();
             InitializeTransport();
             ScanBindings();
@@ -907,6 +912,11 @@ namespace Mizotake.UnityUiSync
         internal void ApplyRemoteState(string syncId, string valueType, object value, StateStamp stamp, bool isSnapshot)
         {
             CanvasUiSyncStateService.ApplyRemoteState(this, syncId, valueType, value, stamp, isSnapshot);
+        }
+
+        internal void ApplyRemoteState(string syncId, string valueType, object value, StateStamp stamp, bool isSnapshot, bool canInitializeLocalState)
+        {
+            CanvasUiSyncStateService.ApplyRemoteState(this, syncId, valueType, value, stamp, isSnapshot, canInitializeLocalState);
         }
 
         internal void FlushPendingCommits(float now)

@@ -141,6 +141,7 @@ namespace Mizotake.UnityUiSync
             foreach (var snapshotId in owner.expiredSnapshotIds)
             {
                 owner.activeSnapshotIds.Remove(snapshotId);
+                owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
                 if (owner.ShouldVerboseLog())
                 {
                     var builder = owner.stringBuilderScratch;
@@ -238,7 +239,7 @@ namespace Mizotake.UnityUiSync
                 var endpoint = owner.profile.peerEndpoints[index];
                 if (IsPeerTargetActive(owner, endpoint))
                 {
-                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId);
+                    owner.SendTo(endpoint.ipAddress, endpoint.port, CanvasUiSync.HelloAddress, owner.profile.nodeId, owner.profile.protocolVersion, owner.canvasId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks));
                 }
             }
         }
@@ -327,13 +328,13 @@ namespace Mizotake.UnityUiSync
             using (SendSnapshotMarker.Auto())
             {
                 var snapshotId = Guid.NewGuid().ToString("N");
-                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+                sendBegin(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks) });
                 foreach (var values in owner.EnumerateSnapshotStateValues(snapshotId))
                 {
                     sendState(values);
                 }
 
-                sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId });
+                sendEnd(new object[] { snapshotId, owner.canvasId, owner.profile.nodeId, owner.sessionId, SerializeLogicalTicks(owner.sessionStartedAtTicks) });
                 if (owner.ShouldDebugLog())
                 {
                     var builder = owner.stringBuilderScratch;
@@ -354,7 +355,7 @@ namespace Mizotake.UnityUiSync
             {
                 if (pair.Value.ValueType != "Button" && owner.localStates.TryGetValue(pair.Key, out var state))
                 {
-                    yield return new object[] { snapshotId, owner.canvasId, pair.Key, pair.Value.ValueType, owner.SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId, state.Stamp.Sequence };
+                    yield return new object[] { snapshotId, owner.canvasId, pair.Key, pair.Value.ValueType, owner.SerializeValue(state.Value, pair.Value.ValueType), SerializeLogicalTicks(state.Stamp.LogicalTicks), state.Stamp.NodeId ?? string.Empty, state.Stamp.Sequence };
                 }
             }
         }

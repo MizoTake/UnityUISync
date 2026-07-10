@@ -556,6 +556,20 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator Toggle_LatePeerConnectsToAlreadyRunningPeer_ReceivesExistingInitialState()
+        {
+            var ports = AllocatePortPair();
+            var peerA = CreatePeer("PeerACanvas", "PeerA", "PeerB", ports.peerAPort, ports.peerBPort, false, true);
+            yield return WaitFrames(10);
+
+            var peerB = CreatePeer("PeerBCanvas", "PeerB", "PeerA", ports.peerBPort, ports.peerAPort, false, false);
+            yield return WaitUntil(() => peerB.toggle.isOn, 180);
+
+            Assert.That(peerA.toggle.isOn, Is.True);
+            Assert.That(peerB.toggle.isOn, Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator SharedRuntimeControls_RemoteSyncOff_StatefulControlsCatchUpWithinBudget_ButtonDoesNotReplay()
         {
             var ports = AllocatePortPair();
@@ -1545,14 +1559,14 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBIndicator.text, Is.EqualTo("CLICKED"));
         }
 
-        private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false)
+        private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false, bool initialToggleValue = false)
         {
             var canvasObject = new GameObject(canvasName, typeof(Canvas), typeof(GraphicRaycaster));
             canvasObject.SetActive(false);
             var toggleObject = new GameObject("PowerToggle", typeof(RectTransform), typeof(Toggle));
             toggleObject.transform.SetParent(canvasObject.transform, false);
             var toggle = toggleObject.GetComponent<Toggle>();
-            toggle.SetIsOnWithoutNotify(false);
+            toggle.SetIsOnWithoutNotify(initialToggleValue);
             CanvasUiSyncSamplePresenter presenter = null;
             if (attachPresenter)
             {

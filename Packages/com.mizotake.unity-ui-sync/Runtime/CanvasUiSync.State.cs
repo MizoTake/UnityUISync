@@ -227,6 +227,11 @@ namespace Mizotake.UnityUiSync
 
         internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot)
         {
+            ApplyRemoteState(owner, syncId, valueType, value, stamp, isSnapshot, false);
+        }
+
+        internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot, bool canInitializeLocalState)
+        {
             if (!owner.bindings.TryGetValue(syncId, out var binding))
             {
                 if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing))
@@ -262,7 +267,7 @@ namespace Mizotake.UnityUiSync
 
             var previousValue = state.Value;
 
-            if (!owner.IsIncomingStampNewer(state.Stamp, stamp))
+            if (!owner.IsIncomingStampNewer(state.Stamp, stamp) && !CanApplyInitialSnapshotState(state.Stamp, stamp, isSnapshot, canInitializeLocalState))
             {
                 if (owner.ShouldVerboseLog())
                 {
@@ -352,6 +357,16 @@ namespace Mizotake.UnityUiSync
             }
 
             return Equals(left, right);
+        }
+
+        private static bool CanApplyInitialSnapshotState(CanvasUiSync.StateStamp current, CanvasUiSync.StateStamp incoming, bool isSnapshot, bool canInitializeLocalState)
+        {
+            return isSnapshot && canInitializeLocalState && IsDefaultStamp(current) && IsDefaultStamp(incoming);
+        }
+
+        private static bool IsDefaultStamp(CanvasUiSync.StateStamp stamp)
+        {
+            return stamp.LogicalTicks == 0L && stamp.Sequence == 0 && string.IsNullOrEmpty(stamp.NodeId);
         }
 
         private static void LogThrottlePropose(CanvasUiSync owner, string syncId)

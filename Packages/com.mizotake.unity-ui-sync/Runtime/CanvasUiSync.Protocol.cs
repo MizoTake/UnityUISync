@@ -81,6 +81,7 @@ namespace Mizotake.UnityUiSync
             var nodeId = ReadString(values, 0);
             var protocolVersion = Convert.ToInt32(values[1]);
             var incomingSessionId = ReadString(values, 3);
+            var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
             if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
@@ -96,23 +97,24 @@ namespace Mizotake.UnityUiSync
                 if (!string.Equals(node.SessionId, incomingSessionId, StringComparison.Ordinal))
                 {
                     node.SessionId = incomingSessionId;
-                    owner.hasSnapshot = false;
-                    owner.snapshotRetryCount = 0;
-                    owner.RequestSnapshotIfNeeded(true);
+                    node.SessionStartedAtTicks = incomingSessionStartedAtTicks;
+                    SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks);
                 }
 
                 node.LastSeenAt = Time.unscaledTime;
+                if (incomingSessionStartedAtTicks > 0L)
+                {
+                    node.SessionStartedAtTicks = incomingSessionStartedAtTicks;
+                }
             }
             else
             {
-                owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime);
+                owner.nodes[nodeId] = new CanvasUiSync.NodeState(nodeId, incomingSessionId, Time.unscaledTime, incomingSessionStartedAtTicks);
                 if (owner.ShouldDebugLog())
                 {
                     LogPeerJoin(owner, nodeId);
                 }
-                owner.hasSnapshot = false;
-                owner.snapshotRetryCount = 0;
-                owner.RequestSnapshotIfNeeded(true);
+                SynchronizeWithHelloPeer(owner, nodeId, incomingSessionStartedAtTicks);
             }
         }
 
@@ -167,13 +169,17 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (owner.ShouldIgnoreIncomingPeer(ReadString(values, 2)))
+            var nodeId = ReadString(values, 2);
+            if (owner.ShouldIgnoreIncomingPeer(nodeId))
             {
                 return;
             }
 
             var snapshotId = ReadString(values, 0);
+            var incomingSessionId = ReadString(values, 3);
+            var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
             owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
+            owner.activeSnapshotCanInitializeLocalState[snapshotId] = CanSnapshotInitializeLocalState(owner, nodeId, incomingSessionId, incomingSessionStartedAtTicks);
             if (owner.ShouldDebugLog())
             {
                 LogSnapshotBegin(owner, snapshotId);
@@ -206,7 +212,8 @@ namespace Mizotake.UnityUiSync
 
             var syncId = ReadString(values, 2);
             var valueType = ReadString(values, 3);
-            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true);
+            var canInitializeLocalState = owner.activeSnapshotCanInitializeLocalState.TryGetValue(snapshotId, out var canInitialize) && canInitialize;
+            owner.ApplyRemoteState(syncId, valueType, owner.DeserializeValue(values[4], valueType), snapshotStamp, true, canInitializeLocalState);
         }
 
         internal static void HandleEndSnapshot(CanvasUiSync owner, object[] values)
@@ -228,7 +235,9 @@ namespace Mizotake.UnityUiSync
 
             var snapshotId = ReadString(values, 0);
             var incomingCanvasId = ReadString(values, 1);
-            if (!owner.activeSnapshotIds.Remove(snapshotId) || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
+            var hadSnapshot = owner.activeSnapshotIds.Remove(snapshotId);
+            owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
+            if (!hadSnapshot || !string.Equals(incomingCanvasId, owner.canvasId, StringComparison.Ordinal))
             {
                 return;
             }
@@ -410,6 +419,11 @@ namespace Mizotake.UnityUiSync
 
         internal static bool IsIncomingStampNewer(CanvasUiSync.StateStamp current, CanvasUiSync.StateStamp incoming)
         {
+            if (IsDefaultStamp(current) && IsDefaultStamp(incoming))
+            {
+                return false;
+            }
+
             if (incoming.LogicalTicks != current.LogicalTicks)
             {
                 return incoming.LogicalTicks > current.LogicalTicks;
@@ -422,6 +436,11 @@ namespace Mizotake.UnityUiSync
             }
 
             return incoming.Sequence > current.Sequence;
+        }
+
+        private static bool IsDefaultStamp(CanvasUiSync.StateStamp stamp)
+        {
+            return stamp.LogicalTicks == 0L && stamp.Sequence == 0 && string.IsNullOrEmpty(stamp.NodeId);
         }
 
         internal static object SerializeValue(CanvasUiSync owner, object value, string valueType)
@@ -462,6 +481,52 @@ namespace Mizotake.UnityUiSync
             if (owner.ShouldDebugLog() && owner.profile.logTypeMismatch)
             {
                 LogTypeMismatch(owner, syncId, localType, remoteType);
+            }
+        }
+
+        private static void SynchronizeWithHelloPeer(CanvasUiSync owner, string nodeId, long incomingSessionStartedAtTicks)
+        {
+            if (incomingSessionStartedAtTicks > 0L && owner.sessionStartedAtTicks > 0L && incomingSessionStartedAtTicks >= owner.sessionStartedAtTicks)
+            {
+                var endpoint = owner.FindPeerTarget(nodeId);
+                if (endpoint != null)
+                {
+                    owner.SendSnapshot(endpoint.ipAddress, endpoint.port);
+                }
+
+                return;
+            }
+
+            owner.hasSnapshot = false;
+            owner.snapshotRetryCount = 0;
+            owner.RequestSnapshotIfNeeded(true);
+        }
+
+        private static bool CanSnapshotInitializeLocalState(CanvasUiSync owner, string nodeId, string incomingSessionId, long incomingSessionStartedAtTicks)
+        {
+            var sourceStartedAtTicks = incomingSessionStartedAtTicks;
+            if (sourceStartedAtTicks <= 0L && owner.nodes.TryGetValue(nodeId, out var node) && string.Equals(node.SessionId, incomingSessionId, StringComparison.Ordinal))
+            {
+                sourceStartedAtTicks = node.SessionStartedAtTicks;
+            }
+
+            return sourceStartedAtTicks > 0L && owner.sessionStartedAtTicks > 0L && sourceStartedAtTicks < owner.sessionStartedAtTicks;
+        }
+
+        private static long ReadOptionalInt64(object[] values, int index)
+        {
+            if (values == null || values.Length <= index || values[index] == null)
+            {
+                return 0L;
+            }
+
+            try
+            {
+                return Convert.ToInt64(values[index]);
+            }
+            catch
+            {
+                return 0L;
             }
         }
 
