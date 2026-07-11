@@ -15,8 +15,10 @@ namespace Mizotake.UnityUiSync
         private const string DropdownBlockerObjectName = "Blocker";
         internal const string ScanBindingsMarkerName = "CanvasUiSync.ScanBindings";
         internal const string ComputeBindingHierarchySignatureMarkerName = "CanvasUiSync.ComputeBindingHierarchySignature";
+        internal const string CollectSupportedComponentsMarkerName = "CanvasUiSync.CollectSupportedComponents";
         private static readonly ProfilerMarker ScanBindingsMarker = new ProfilerMarker(ScanBindingsMarkerName);
         private static readonly ProfilerMarker ComputeBindingHierarchySignatureMarker = new ProfilerMarker(ComputeBindingHierarchySignatureMarkerName);
+        private static readonly ProfilerMarker CollectSupportedComponentsMarker = new ProfilerMarker(CollectSupportedComponentsMarkerName);
         internal sealed class BindingScanContext
         {
             private CanvasUiSync owner;
@@ -39,8 +41,7 @@ namespace Mizotake.UnityUiSync
                 dropdownRuntimeRoots = owner.dropdownRuntimeRootScratch;
                 pathCache.Clear();
                 pathHashCache.Clear();
-                CollectComponentsInChildren(owner, Dropdowns);
-                CollectComponentsInChildren(owner, TmpDropdowns);
+                CollectSupportedComponents(owner);
                 EnsureDropdownTemplateMarkers(owner, Dropdowns);
                 EnsureDropdownTemplateMarkers(owner, TmpDropdowns);
                 dropdownTemplateRoots.Clear();
@@ -67,6 +68,11 @@ namespace Mizotake.UnityUiSync
             public string BuildSyncIdPrefix(Transform target, string componentTypePrefix)
             {
                 return CanvasUiSyncBindingsService.BuildSyncIdPrefix(owner, target, componentTypePrefix, pathCache);
+            }
+
+            public bool IsComponentExcluded(Component component)
+            {
+                return owner.IsComponentExcluded(component, pathCache);
             }
 
             public bool IsTemplateComponent(Transform target)
@@ -188,7 +194,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterToggles(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.toggleScratch);
             for (var index = 0; index < owner.toggleScratch.Count; index++)
             {
                 var component = owner.toggleScratch[index];
@@ -212,7 +217,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterSliders(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.sliderScratch);
             for (var index = 0; index < owner.sliderScratch.Count; index++)
             {
                 var component = owner.sliderScratch[index];
@@ -238,7 +242,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterScrollbars(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.scrollbarScratch);
             for (var index = 0; index < owner.scrollbarScratch.Count; index++)
             {
                 var component = owner.scrollbarScratch[index];
@@ -314,7 +317,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterInputFields(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.inputFieldScratch);
             for (var index = 0; index < owner.inputFieldScratch.Count; index++)
             {
                 var component = owner.inputFieldScratch[index];
@@ -346,7 +348,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterTmpInputFields(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.tmpInputFieldScratch);
             for (var index = 0; index < owner.tmpInputFieldScratch.Count; index++)
             {
                 var component = owner.tmpInputFieldScratch[index];
@@ -378,7 +379,6 @@ namespace Mizotake.UnityUiSync
 
         private static void RegisterButtons(CanvasUiSync owner, BindingScanContext context)
         {
-            CollectComponentsInChildren(owner, owner.buttonScratch);
             for (var index = 0; index < owner.buttonScratch.Count; index++)
             {
                 var component = owner.buttonScratch[index];
@@ -462,7 +462,7 @@ namespace Mizotake.UnityUiSync
             return BuildPath(owner, target, null);
         }
 
-        private static string BuildPath(CanvasUiSync owner, Transform target, Dictionary<Transform, string> pathCache)
+        internal static string BuildPath(CanvasUiSync owner, Transform target, Dictionary<Transform, string> pathCache)
         {
             if (target == null)
             {
@@ -732,7 +732,13 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            owner.currentHierarchyRescanIntervalSeconds = Mathf.Min(CanvasUiSync.RuntimeHierarchyRescanMaxIntervalSeconds, owner.currentHierarchyRescanIntervalSeconds * 2f);
+            var usePendingFastRescan = now <= owner.pendingHierarchyFastRescanUntil && owner.HasPendingMissingBinding();
+            var maximumIntervalSeconds = usePendingFastRescan ? CanvasUiSync.RuntimeHierarchyPendingRescanMaxIntervalSeconds : CanvasUiSync.RuntimeHierarchyRescanMaxIntervalSeconds;
+            if (!usePendingFastRescan)
+            {
+                owner.currentHierarchyRescanIntervalSeconds = Mathf.Max(owner.currentHierarchyRescanIntervalSeconds, CanvasUiSync.RuntimeHierarchyRescanIntervalSeconds * 0.5f);
+            }
+            owner.currentHierarchyRescanIntervalSeconds = Mathf.Min(maximumIntervalSeconds, owner.currentHierarchyRescanIntervalSeconds * 2f);
             owner.nextHierarchyRescanTime = now + owner.currentHierarchyRescanIntervalSeconds;
         }
 
@@ -743,26 +749,34 @@ namespace Mizotake.UnityUiSync
                 return true;
             }
 
-            owner.RefreshBindingsIfHierarchyChanged(true);
+            var now = Time.unscaledTime;
+            if (owner.HasPendingMissingBinding() && now <= owner.pendingHierarchyFastRescanUntil)
+            {
+                return false;
+            }
+
+            owner.RefreshBindingsIfHierarchyChanged(false);
             return owner.bindings.ContainsKey(syncId);
         }
 
         internal static bool RefreshBindingsIfHierarchyChanged(CanvasUiSync owner, bool force)
         {
-            owner.RefreshExclusionRules();
-            owner.PruneExcludedPendingCommits();
             var signature = ComputeBindingHierarchySignature(owner);
+            owner.PruneExcludedPendingCommits();
             if (!force && signature == owner.bindingHierarchySignature)
             {
                 return false;
             }
 
+            var previousBindingCount = owner.bindings.Count;
             var previousRegistryHash = owner.registryHash;
+            var previousFullRegistryHash = owner.fullRegistryHash;
             var wasReceivingSnapshot = owner.snapshotReceiveStates.Count > 0;
             owner.ScanBindings();
             owner.InitializeLocalState();
             owner.bindingHierarchySignature = signature;
             owner.ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
+            owner.NotifyBindingsRefreshed(previousBindingCount, previousRegistryHash, previousFullRegistryHash);
             if (!owner.initialized || string.Equals(previousRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
                 return true;
@@ -793,12 +807,6 @@ namespace Mizotake.UnityUiSync
                 {
                     var context = PrepareBindingScanContext(owner);
                     var hash = 17;
-                    CollectComponentsInChildren(owner, owner.toggleScratch);
-                    CollectComponentsInChildren(owner, owner.sliderScratch);
-                    CollectComponentsInChildren(owner, owner.scrollbarScratch);
-                    CollectComponentsInChildren(owner, owner.inputFieldScratch);
-                    CollectComponentsInChildren(owner, owner.tmpInputFieldScratch);
-                    CollectComponentsInChildren(owner, owner.buttonScratch);
                     AppendBindingHierarchySignature(owner, ref hash, owner.toggleScratch, "Toggle", context);
                     AppendBindingHierarchySignature(owner, ref hash, owner.sliderScratch, "Slider", context);
                     AppendBindingHierarchySignature(owner, ref hash, owner.scrollbarScratch, "Scrollbar", context);
@@ -823,7 +831,8 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                hash = (hash * 31) + (context != null ? context.BuildSyncIdFingerprint(component.transform, componentType) : BuildSyncIdFingerprint(owner, component.transform, componentType, null));
+                var bindingFingerprint = context != null ? context.BuildSyncIdFingerprint(component.transform, componentType) : BuildSyncIdFingerprint(owner, component.transform, componentType, null);
+                hash = (hash * 31) + CombineFingerprint(bindingFingerprint, component.GetInstanceID());
             }
         }
 
@@ -837,7 +846,7 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                hash = (hash * 31) + context.BuildSyncIdFingerprint(component.transform, componentType);
+                hash = (hash * 31) + CombineFingerprint(context.BuildSyncIdFingerprint(component.transform, componentType), component.GetInstanceID());
             }
         }
 
@@ -900,7 +909,7 @@ namespace Mizotake.UnityUiSync
 
         private static bool ShouldSkipComponent(CanvasUiSync owner, Component component, BindingScanContext context = null, bool ignoreExclusions = false)
         {
-            return component == null || !ignoreExclusions && owner.IsComponentExcluded(component) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
+            return component == null || !ignoreExclusions && (context != null ? context.IsComponentExcluded(component) : owner.IsComponentExcluded(component)) || IsDropdownBlockerComponent(component) || !(component is Dropdown) && !(component is TMP_Dropdown) && (IsDropdownTemplateComponent(owner, component.transform, context) || IsDropdownRuntimeComponent(owner, component.transform, context));
         }
 
         private static bool IsDropdownTemplateComponent(CanvasUiSync owner, Transform target, BindingScanContext context = null)
@@ -1228,6 +1237,59 @@ namespace Mizotake.UnityUiSync
         {
             results.Clear();
             owner.GetComponentsInChildren(true, results);
+        }
+
+        private static void CollectSupportedComponents(CanvasUiSync owner)
+        {
+            using (CollectSupportedComponentsMarker.Auto())
+            {
+                owner.selectableScratch.Clear();
+                owner.toggleScratch.Clear();
+                owner.sliderScratch.Clear();
+                owner.scrollbarScratch.Clear();
+                owner.dropdownScratch.Clear();
+                owner.tmpDropdownScratch.Clear();
+                owner.inputFieldScratch.Clear();
+                owner.tmpInputFieldScratch.Clear();
+                owner.buttonScratch.Clear();
+                owner.GetComponentsInChildren(true, owner.selectableScratch);
+                for (var index = 0; index < owner.selectableScratch.Count; index++)
+                {
+                    var selectable = owner.selectableScratch[index];
+                    if (selectable is Toggle toggle)
+                    {
+                        owner.toggleScratch.Add(toggle);
+                    }
+                    else if (selectable is Slider slider)
+                    {
+                        owner.sliderScratch.Add(slider);
+                    }
+                    else if (selectable is Scrollbar scrollbar)
+                    {
+                        owner.scrollbarScratch.Add(scrollbar);
+                    }
+                    else if (selectable is Dropdown dropdown)
+                    {
+                        owner.dropdownScratch.Add(dropdown);
+                    }
+                    else if (selectable is TMP_Dropdown tmpDropdown)
+                    {
+                        owner.tmpDropdownScratch.Add(tmpDropdown);
+                    }
+                    else if (selectable is InputField inputField)
+                    {
+                        owner.inputFieldScratch.Add(inputField);
+                    }
+                    else if (selectable is TMP_InputField tmpInputField)
+                    {
+                        owner.tmpInputFieldScratch.Add(tmpInputField);
+                    }
+                    else if (selectable is Button button)
+                    {
+                        owner.buttonScratch.Add(button);
+                    }
+                }
+            }
         }
 
         private static void EnsureDropdownTemplateMarkers(CanvasUiSync owner, List<Dropdown> dropdowns)

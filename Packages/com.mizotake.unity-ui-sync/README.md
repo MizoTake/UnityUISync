@@ -67,3 +67,103 @@ Package Manager から `Import Samples > Basic Setup` を実行すると、`Samp
 - RectTransform など同期対象外の Component を選ぶと、同じ GameObject 上のすべての同期 UI を除外します。
 - UI を破棄して再生成しても、同じ Binding ID または階層パスなら除外を維持します。階層を移動する動的 UI には `CanvasUiSyncBindingId` を設定してください。
 - 除外を解除する場合は、Inspector のリスト要素自体を削除してください。参照が Missing になっても保存済みの安定キーは維持されます。
+
+## Runtime API
+
+`CanvasUiSync` はゲーム側の C# コードから操作できます。API は Unity のメインスレッドから呼び出してください。
+
+### 状態・Binding の参照と操作
+
+```csharp
+using System.Collections.Generic;
+using Mizotake.UnityUiSync;
+using UnityEngine;
+using UnityEngine.UI;
+
+var bindings = new List<CanvasUiSyncBindingInfo>();
+uiSync.CopyBindings(bindings);
+
+var result = uiSync.TrySetValue("OperationCanvas/PowerToggle:Toggle", true);
+if (result != CanvasUiSyncApiResult.Succeeded)
+{
+    Debug.LogWarning(result);
+}
+
+uiSync.TryGetSynchronizedValue("OperationCanvas/PowerToggle:Toggle", out var value);
+```
+
+`TrySetValue(Component, object)` と `TryInvokeButton(Button)` も利用できます。これらは UI を直接書き換えて OSC を組み立てるのではなく、既存の stamp、送信間隔、除外、snapshot 制御を通します。
+
+主な失敗結果は `NotInitialized`、`Inactive`、`SyncDisabled`、`Busy`、`Excluded`、`BindingNotFound`、`TypeMismatch`、`WrongThread` です。Collectionを読み取るAPIもメインスレッド専用で、別スレッドから呼ぶと `InvalidOperationException` を送出します。
+
+### 動的 UI
+
+```csharp
+var runtimeToggle = Instantiate(togglePrefab, canvasTransform).GetComponent<Toggle>();
+uiSync.NotifyHierarchyChanged();
+
+// 同じフレーム中に Binding が必要な場合だけ即時更新します。
+uiSync.RefreshBindingsNow();
+uiSync.TrySetValue(runtimeToggle, true);
+```
+
+`NotifyHierarchyChanged()` は次の更新での再走査を予約する軽量 API です。`RefreshBindingsNow()` は Canvas 全体を即時走査します。動的 UI では `CanvasUiSyncBindingId` を付与し、peer 間で同じ Binding ID を使うことを推奨します。
+
+### 通信操作
+
+- `SendHelloNow()`
+- `RequestSnapshotNow()`
+- `ResynchronizeNow()`
+- `SendSnapshotToPeer(nodeId)`
+- `SetSyncEnabled(value)` / `EnableSync()` / `DisableSync()`
+
+raw OSC の address や payload は公開していません。公開通信 API は既存プロトコルの形式とpeer設定を維持します。
+
+### 設定の適用
+
+```csharp
+var runtimeProfile = Instantiate(profileTemplate);
+runtimeProfile.nodeId = "RuntimePeer";
+runtimeProfile.listenPort = 9100;
+runtimeProfile.peerEndpoints[0].ipAddress = "192.168.0.20";
+runtimeProfile.peerEndpoints[0].port = 9200;
+
+uiSync.ApplyProfile(runtimeProfile);
+uiSync.SetCanvasId("SharedOperationCanvas");
+```
+
+`ApplyProfile()` は渡された `ScriptableObject` を書き換えません。実行中に適用した場合はtransportを再設定し、新しいsessionを開始してBindingとsnapshot状態を再構築します。複数の `CanvasUiSync` で同じProfile assetを共有したまま個別設定を変更したい場合は、上記のように `Instantiate` したruntime copyを渡してください。
+
+listen portを変更した場合はuOSCの再listen完了まで通信APIが`Busy`を返します。`GetStatus().TransportReady`が`true`になった後に送受信可能です。再listen完了時には`SynchronizationStateChanged`が発火し、Helloとsnapshot要求もその時点から開始します。
+
+ProfileまたはCanvas IDを変更すると、接続済みpeerには `ConfigurationReset`、受信途中のsnapshotには `Cancelled` が通知されます。`SetCanvasId(null)` または空文字を渡すとCanvas ID上書きを解除し、GameObject名へ戻します。
+
+### 通知
+
+以下は購読可能な C# event です。
+
+- `SynchronizationStateChanged`
+- `BindingsRefreshed`
+- `PeerStatusChanged`
+- `StateApplied`
+- `ButtonInvoked`
+- `SnapshotStatusChanged`
+- `DiagnosticRaised`
+
+```csharp
+uiSync.StateApplied += change =>
+{
+    Debug.Log($"{change.Origin}: {change.SyncId} = {change.Value}");
+};
+
+uiSync.PeerStatusChanged += change =>
+{
+    Debug.Log($"{change.Kind}: {change.Peer.NodeId}");
+};
+```
+
+通知は内部状態の更新完了後にUnityメインスレッドで同期発火します。購読者が例外を送出しても、他の購読者と同期処理は継続します。
+
+`StateApplied`と`ButtonInvoked`にはlogical ticks、node ID、sequenceを持つ`Stamp`が含まれます。`BindingsRefreshed`には通常／完全registry hash、`SnapshotStatusChanged`にはremote registry hashと互換性判定が含まれます。snapshotの`Started`には`Completed`、`TimedOut`、`RegistryMismatch`、`Cancelled`のいずれかが対応します。
+
+通知callback内で`RefreshBindingsNow()`、`ApplyProfile()`、`SetCanvasId()`を再入実行すると`Busy`を返します。`StateApplied`から同じBindingへ無条件に`TrySetValue()`を呼ぶと循環するため、値または`Origin`を確認してください。

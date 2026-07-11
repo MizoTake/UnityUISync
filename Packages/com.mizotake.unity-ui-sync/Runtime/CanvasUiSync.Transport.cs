@@ -17,8 +17,26 @@ namespace Mizotake.UnityUiSync
 
         internal static void InitializeTransport(CanvasUiSync owner)
         {
-            owner.server = owner.GetComponent<uOSC.uOscServer>();
-            owner.client = owner.GetComponent<uOSC.uOscClient>();
+            var attachedServer = owner.GetComponent<uOSC.uOscServer>();
+            var attachedClient = owner.GetComponent<uOSC.uOscClient>();
+            if (attachedServer != null && attachedClient != null && owner.ownsTransportHost && owner.transportHost != null)
+            {
+                owner.ReleaseOwnedTransport();
+            }
+            var previousServer = owner.server;
+            var previousClient = owner.client;
+            var previouslyOwnedServer = owner.ownsServer;
+            var previouslyOwnedClient = owner.ownsClient;
+            owner.server = attachedServer;
+            owner.client = attachedClient;
+            if (owner.server != null)
+            {
+                owner.ownsServer = false;
+            }
+            if (owner.client != null)
+            {
+                owner.ownsClient = false;
+            }
             GameObject configuredTransportHost = null;
             if (owner.server == null || owner.client == null)
             {
@@ -30,12 +48,30 @@ namespace Mizotake.UnityUiSync
 
                 if (owner.server == null)
                 {
-                    owner.server = configuredTransportHost.GetComponent<uOSC.uOscServer>() ?? configuredTransportHost.AddComponent<uOSC.uOscServer>();
+                    owner.server = configuredTransportHost.GetComponent<uOSC.uOscServer>();
+                    if (owner.server == null)
+                    {
+                        owner.server = configuredTransportHost.AddComponent<uOSC.uOscServer>();
+                        owner.ownsServer = true;
+                    }
+                    else
+                    {
+                        owner.ownsServer = previouslyOwnedServer && owner.server == previousServer;
+                    }
                 }
 
                 if (owner.client == null)
                 {
-                    owner.client = configuredTransportHost.GetComponent<uOSC.uOscClient>() ?? configuredTransportHost.AddComponent<uOSC.uOscClient>();
+                    owner.client = configuredTransportHost.GetComponent<uOSC.uOscClient>();
+                    if (owner.client == null)
+                    {
+                        owner.client = configuredTransportHost.AddComponent<uOSC.uOscClient>();
+                        owner.ownsClient = true;
+                    }
+                    else
+                    {
+                        owner.ownsClient = previouslyOwnedClient && owner.client == previousClient;
+                    }
                 }
             }
 
@@ -50,6 +86,89 @@ namespace Mizotake.UnityUiSync
             }
         }
 
+        internal static void ReleaseOwnedTransport(CanvasUiSync owner)
+        {
+            if (owner.ownsTransportHost && owner.transportHost != null)
+            {
+                var ownedHost = owner.transportHost;
+                if (owner.server != null && owner.server.gameObject == ownedHost)
+                {
+                    owner.server = null;
+                }
+                if (owner.client != null && owner.client.gameObject == ownedHost)
+                {
+                    owner.client = null;
+                }
+                DestroyOwnedObject(ownedHost);
+                owner.transportHost = null;
+            }
+            else
+            {
+                if (owner.ownsServer && owner.server != null)
+                {
+                    var ownedServer = owner.server;
+                    owner.server = null;
+                    DestroyOwnedObject(ownedServer);
+                }
+                if (owner.ownsClient && owner.client != null)
+                {
+                    var ownedClient = owner.client;
+                    owner.client = null;
+                    DestroyOwnedObject(ownedClient);
+                }
+            }
+            owner.ownsTransportHost = false;
+            owner.ownsServer = false;
+            owner.ownsClient = false;
+        }
+
+        private static void DestroyOwnedObject(UnityEngine.Object target)
+        {
+            if (Application.isPlaying)
+            {
+                UnityEngine.Object.Destroy(target);
+            }
+            else
+            {
+                UnityEngine.Object.DestroyImmediate(target);
+            }
+        }
+
+        internal static void RestartTransport(CanvasUiSync owner)
+        {
+            var hadServer = owner.server != null;
+            var hadClient = owner.client != null;
+            var serverPortChanged = hadServer && owner.server.port != owner.profile.listenPort;
+            owner.transportRestartPending = false;
+            owner.UnsubscribeTransportListener();
+            if (owner.server != null)
+            {
+                owner.server.StopServer();
+            }
+            if (owner.client != null)
+            {
+                owner.client.StopClient();
+            }
+
+            InitializeTransport(owner);
+            if (hadServer && !serverPortChanged && owner.server.isActiveAndEnabled && !owner.server.isRunning)
+            {
+                owner.server.StartServer();
+            }
+            else if (hadServer && serverPortChanged && owner.server.isActiveAndEnabled)
+            {
+                owner.transportRestartPending = true;
+            }
+            if (hadClient && owner.client.isActiveAndEnabled && !owner.client.isRunning)
+            {
+                owner.client.StartClient();
+            }
+            if (owner.isActiveAndEnabled)
+            {
+                owner.SubscribeTransportListener();
+            }
+        }
+
         internal static GameObject GetOrCreateTransportHost(CanvasUiSync owner)
         {
             if (owner.transportHost != null)
@@ -61,10 +180,12 @@ namespace Mizotake.UnityUiSync
             if (existingHost != null)
             {
                 owner.transportHost = existingHost.gameObject;
+                owner.ownsTransportHost = false;
                 return owner.transportHost;
             }
 
             owner.transportHost = new GameObject(CanvasUiSync.TransportHostName);
+            owner.ownsTransportHost = true;
             owner.transportHost.hideFlags = HideFlags.HideInHierarchy;
             owner.transportHost.transform.SetParent(owner.transform, false);
             owner.transportHost.SetActive(false);
@@ -292,7 +413,12 @@ namespace Mizotake.UnityUiSync
 
             foreach (var nodeId in owner.expiredNodeIds)
             {
+                owner.nodes.TryGetValue(nodeId, out var expiredNode);
                 owner.nodes.Remove(nodeId);
+                if (expiredNode != null)
+                {
+                    owner.NotifyPeerStatusChanged(CanvasUiSyncPeerChangeKind.TimedOut, expiredNode);
+                }
                 if (owner.ShouldDebugLog())
                 {
                     var builder = owner.stringBuilderScratch;

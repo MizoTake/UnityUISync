@@ -227,8 +227,9 @@ namespace Mizotake.UnityUiSync
 
             if (IsDropdownBinding(binding))
             {
-                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, true);
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, true, CanvasUiSyncValueOrigin.Local);
             }
+            owner.NotifyStateApplied(binding, value, CanvasUiSyncValueOrigin.Local, stamp);
         }
 
         internal static void CommitLocalButton(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, CanvasUiSync.StateStamp stamp)
@@ -240,6 +241,7 @@ namespace Mizotake.UnityUiSync
 
             owner.latestAppliedButtonStamps[binding.SyncId] = stamp;
             owner.BroadcastButton(binding.SyncId, stamp);
+            owner.NotifyButtonInvoked(binding, CanvasUiSyncValueOrigin.Local, stamp);
         }
 
         internal static void ApplyRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot)
@@ -275,13 +277,24 @@ namespace Mizotake.UnityUiSync
                         return;
                     }
 
-                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
+                    var receivedAt = Time.unscaledTime;
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, receivedAt, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
+                    if (!isSnapshot)
+                    {
+                        owner.SchedulePendingRemoteCommitCleanup(receivedAt + pendingTimeoutSeconds);
+                    }
                     return;
                 }
 
                 if (isSnapshot || !owner.TryRefreshBindingsForSyncId(syncId) || !owner.bindings.TryGetValue(syncId, out binding))
                 {
-                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
+                    var receivedAt = Time.unscaledTime;
+                    owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, receivedAt, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
+                    owner.ArmPendingBindingDiscovery(receivedAt);
+                    if (!isSnapshot)
+                    {
+                        owner.SchedulePendingRemoteCommitCleanup(receivedAt + pendingTimeoutSeconds);
+                    }
                     owner.HandleUnknownSyncId(syncId);
                     return;
                 }
@@ -327,8 +340,9 @@ namespace Mizotake.UnityUiSync
                 state.PendingStamp = stamp;
                 if (IsDropdownBinding(binding))
                 {
-                    SyncDropdownItemToggleStates(owner, binding, previousValue, observedValue, stamp, false);
+                    SyncDropdownItemToggleStates(owner, binding, previousValue, observedValue, stamp, false, isSnapshot ? CanvasUiSyncValueOrigin.RemoteSnapshot : CanvasUiSyncValueOrigin.RemoteCommit);
                 }
+                owner.NotifyStateApplied(binding, observedValue, isSnapshot ? CanvasUiSyncValueOrigin.RemoteSnapshot : CanvasUiSyncValueOrigin.RemoteCommit, stamp);
                 return;
             }
 
@@ -339,18 +353,30 @@ namespace Mizotake.UnityUiSync
             owner.ApplyValueToBinding(binding, value);
             if (IsDropdownBinding(binding))
             {
-                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false);
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false, isSnapshot ? CanvasUiSyncValueOrigin.RemoteSnapshot : CanvasUiSyncValueOrigin.RemoteCommit);
             }
+            owner.NotifyStateApplied(binding, value, isSnapshot ? CanvasUiSyncValueOrigin.RemoteSnapshot : CanvasUiSyncValueOrigin.RemoteCommit, stamp);
         }
 
         private static void StorePendingRemoteState(CanvasUiSync owner, string syncId, string valueType, object value, CanvasUiSync.StateStamp stamp, bool isSnapshot, bool canInitializeLocalState)
         {
+            var isNewPendingSyncId = !owner.pendingRemoteCommits.ContainsKey(syncId);
             if (owner.pendingRemoteCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
             {
                 return;
             }
 
-            owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, Time.unscaledTime, isSnapshot, canInitializeLocalState, owner.GetPendingRemoteCommitTimeoutSeconds(isSnapshot));
+            var pendingTimeoutSeconds = owner.GetPendingRemoteCommitTimeoutSeconds(isSnapshot);
+            var receivedAt = Time.unscaledTime;
+            owner.pendingRemoteCommits[syncId] = new CanvasUiSync.DeferredStateCommit(valueType, value, stamp, receivedAt, isSnapshot, canInitializeLocalState, pendingTimeoutSeconds);
+            if (isNewPendingSyncId && !owner.bindings.ContainsKey(syncId))
+            {
+                owner.ArmPendingBindingDiscovery(receivedAt);
+            }
+            if (!isSnapshot)
+            {
+                owner.SchedulePendingRemoteCommitCleanup(receivedAt + pendingTimeoutSeconds);
+            }
         }
 
         private static void QueueLocalStateUntilSnapshotCompletes(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object value)
@@ -376,8 +402,9 @@ namespace Mizotake.UnityUiSync
             owner.nextPendingCommitTime = 0f;
             if (IsDropdownBinding(binding))
             {
-                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false);
+                SyncDropdownItemToggleStates(owner, binding, previousValue, value, stamp, false, CanvasUiSyncValueOrigin.Local);
             }
+            owner.NotifyStateApplied(binding, value, CanvasUiSyncValueOrigin.Local, stamp);
         }
 
         internal static void FlushPendingCommits(CanvasUiSync owner, float now)
@@ -475,21 +502,21 @@ namespace Mizotake.UnityUiSync
             return binding != null && (string.Equals(binding.ValueType, "Dropdown", StringComparison.Ordinal) || string.Equals(binding.ValueType, "TMP_Dropdown", StringComparison.Ordinal));
         }
 
-        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object previousValue, object nextValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, CanvasUiSync.UiSyncBinding binding, object previousValue, object nextValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges, CanvasUiSyncValueOrigin origin)
         {
             if (binding.Component is Dropdown dropdown)
             {
-                SyncDropdownItemToggleStates(owner, dropdown.transform, dropdown.options.Count, "DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, dropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, dropdown.options.Count), stamp, broadcastChanges);
+                SyncDropdownItemToggleStates(owner, dropdown.transform, dropdown.options.Count, "DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, dropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, dropdown.options.Count), stamp, broadcastChanges, origin);
                 return;
             }
 
             if (binding.Component is TMP_Dropdown tmpDropdown)
             {
-                SyncDropdownItemToggleStates(owner, tmpDropdown.transform, tmpDropdown.options.Count, "TMP_DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, tmpDropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, tmpDropdown.options.Count), stamp, broadcastChanges);
+                SyncDropdownItemToggleStates(owner, tmpDropdown.transform, tmpDropdown.options.Count, "TMP_DropdownItemToggle[", TryReadDropdownSelectionIndex(previousValue, tmpDropdown.options.Count), TryReadDropdownSelectionIndex(nextValue, tmpDropdown.options.Count), stamp, broadcastChanges, origin);
             }
         }
 
-        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, Transform dropdownTransform, int optionCount, string optionBindingPrefix, int previousSelectedIndex, int nextSelectedIndex, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        private static void SyncDropdownItemToggleStates(CanvasUiSync owner, Transform dropdownTransform, int optionCount, string optionBindingPrefix, int previousSelectedIndex, int nextSelectedIndex, CanvasUiSync.StateStamp stamp, bool broadcastChanges, CanvasUiSyncValueOrigin origin)
         {
             if (optionCount <= 0 || nextSelectedIndex < 0 || nextSelectedIndex >= optionCount)
             {
@@ -501,23 +528,23 @@ namespace Mizotake.UnityUiSync
                 var optionSyncIdPrefix = owner.BuildSyncIdPrefix(dropdownTransform, optionBindingPrefix);
                 if (previousSelectedIndex == nextSelectedIndex)
                 {
-                    SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                    SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges, origin);
                     return;
                 }
 
-                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, previousSelectedIndex, false, stamp, broadcastChanges);
-                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, previousSelectedIndex, false, stamp, broadcastChanges, origin);
+                SyncDropdownItemToggleState(owner, optionSyncIdPrefix, nextSelectedIndex, true, stamp, broadcastChanges, origin);
                 return;
             }
 
             var fallbackOptionSyncIdPrefix = owner.BuildSyncIdPrefix(dropdownTransform, optionBindingPrefix);
             for (var optionIndex = 0; optionIndex < optionCount; optionIndex++)
             {
-                SyncDropdownItemToggleState(owner, fallbackOptionSyncIdPrefix, optionIndex, optionIndex == nextSelectedIndex, stamp, broadcastChanges);
+                SyncDropdownItemToggleState(owner, fallbackOptionSyncIdPrefix, optionIndex, optionIndex == nextSelectedIndex, stamp, broadcastChanges, origin);
             }
         }
 
-        private static void SyncDropdownItemToggleState(CanvasUiSync owner, string optionSyncIdPrefix, int optionIndex, bool targetValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges)
+        private static void SyncDropdownItemToggleState(CanvasUiSync owner, string optionSyncIdPrefix, int optionIndex, bool targetValue, CanvasUiSync.StateStamp stamp, bool broadcastChanges, CanvasUiSyncValueOrigin origin)
         {
             var syncId = optionSyncIdPrefix + optionIndex + "]";
             if (!owner.bindings.TryGetValue(syncId, out var optionBinding))
@@ -566,6 +593,7 @@ namespace Mizotake.UnityUiSync
             {
                 RecalculateNextPendingCommitTime(owner);
             }
+            owner.NotifyStateApplied(optionBinding, targetValue, origin, stamp);
         }
 
         private static int TryReadDropdownSelectionIndex(object value, int optionCount)

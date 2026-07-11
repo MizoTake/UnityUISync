@@ -21,6 +21,7 @@ MonoBehaviour:
   snapshotRequestRetryCount: 5
   snapshotRetryCooldownSeconds: 5
   snapshotStateTimeoutSeconds: 10
+  initialSyncPendingTimeoutSeconds: 1
   periodicFullResyncIntervalSeconds: 60
   sliderEpsilon: 0.001
   minimumProposeIntervalSeconds: 0.05
@@ -36,6 +37,7 @@ MonoBehaviour:
     ipAddress: 127.0.0.1
     port: 9001
     enabled: 1
+  enableDebugLog: 0
   verboseLog: 1
   logUnknownSyncId: 1
   logTypeMismatch: 1

@@ -28,6 +28,7 @@ namespace Mizotake.UnityUiSync
             }
             catch (Exception exception)
             {
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.MalformedPayload, exception.Message, address);
                 if (owner.ShouldDebugLog())
                 {
                     LogMalformedPayload(owner, address, exception.Message);
@@ -83,6 +84,8 @@ namespace Mizotake.UnityUiSync
             var nodeId = ReadString(values, 0);
             var protocolVersion = Convert.ToInt32(values[1]);
             var incomingSessionId = ReadString(values, 3);
+            var hadExistingNode = owner.nodes.TryGetValue(nodeId, out var existingNode);
+            var previousSessionId = hadExistingNode ? existingNode.SessionId : string.Empty;
             var incomingSessionStartedAtTicks = ReadOptionalInt64(values, 4);
             var incomingSessionUptimeSeconds = ReadOptionalSingle(values, 5, -1f);
             var incomingRegistryHash = values.Length > 6 ? ReadString(values, 6) : string.Empty;
@@ -100,9 +103,13 @@ namespace Mizotake.UnityUiSync
 
             AcceptNewPeerSession(owner, nodeId, incomingSessionId);
 
-            if (owner.ShouldDebugLog() && protocolVersion != owner.profile.protocolVersion)
+            if (protocolVersion != owner.profile.protocolVersion)
             {
-                LogProtocolVersionMismatch(owner, protocolVersion);
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.ProtocolVersionMismatch, "Remote protocol version does not match the local protocol version.", null, nodeId);
+                if (owner.ShouldDebugLog())
+                {
+                    LogProtocolVersionMismatch(owner, protocolVersion);
+                }
             }
 
             if (owner.nodes.TryGetValue(nodeId, out var node))
@@ -147,6 +154,14 @@ namespace Mizotake.UnityUiSync
             }
 
             HandlePeerRegistryHashChanged(owner, nodeId, incomingSessionId, incomingRegistryHash);
+            if (!hadExistingNode)
+            {
+                owner.NotifyPeerStatusChanged(CanvasUiSyncPeerChangeKind.Joined, owner.nodes[nodeId]);
+            }
+            else if (!string.Equals(previousSessionId, incomingSessionId, StringComparison.Ordinal))
+            {
+                owner.NotifyPeerStatusChanged(CanvasUiSyncPeerChangeKind.SessionChanged, owner.nodes[nodeId], previousSessionId);
+            }
         }
 
         internal static void HandleRequestSnapshot(CanvasUiSync owner, object[] values)
@@ -170,14 +185,19 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
-            if (owner.ShouldDebugLog() && owner.profile.logRegistryHashMismatch && !string.Equals(incomingRegistryHash, owner.registryHash, StringComparison.Ordinal))
+            if (!string.Equals(incomingRegistryHash, owner.registryHash, StringComparison.Ordinal))
             {
-                LogRegistryHashMismatch(owner, incomingRegistryHash);
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.RegistryMismatch, "Remote registry hash does not match the local registry hash.", null, nodeId);
+                if (owner.ShouldDebugLog() && owner.profile.logRegistryHashMismatch)
+                {
+                    LogRegistryHashMismatch(owner, incomingRegistryHash);
+                }
             }
 
             var endpoint = owner.FindPeerTarget(nodeId);
             if (endpoint == null)
             {
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.SnapshotTargetMissing, "Snapshot target is not configured.", null, nodeId);
                 if (owner.ShouldDebugLog())
                 {
                     LogRequestSnapshotTargetMissing(owner, nodeId);
@@ -238,8 +258,10 @@ namespace Mizotake.UnityUiSync
             ResetActiveSnapshotReception(owner);
             owner.activeSnapshotIds[snapshotId] = Time.unscaledTime + Mathf.Max(0.5f, owner.profile.snapshotStateTimeoutSeconds);
             owner.activeSnapshotCanInitializeLocalState[snapshotId] = canInitializeLocalState;
-            owner.snapshotReceiveStates[snapshotId] = new CanvasUiSync.SnapshotReceiveState(nodeId, incomingSessionId, canInitializeLocalState, expectedStateCount, incomingRegistryHash, incomingHasExclusions, incomingFullRegistryHash);
+            var receiveState = new CanvasUiSync.SnapshotReceiveState(nodeId, incomingSessionId, canInitializeLocalState, expectedStateCount, incomingRegistryHash, incomingHasExclusions, incomingFullRegistryHash);
+            owner.snapshotReceiveStates[snapshotId] = receiveState;
             owner.hasSnapshot = false;
+            owner.NotifySnapshotStatusChanged(CanvasUiSyncSnapshotStatus.Started, snapshotId, receiveState);
             if (owner.ShouldDebugLog())
             {
                 LogSnapshotBegin(owner, snapshotId);
@@ -488,6 +510,7 @@ namespace Mizotake.UnityUiSync
             {
                 button.onClick.Invoke();
             }
+            owner.NotifyButtonInvoked(binding, CanvasUiSyncValueOrigin.RemoteCommit, stamp);
 
             return true;
         }
@@ -513,6 +536,7 @@ namespace Mizotake.UnityUiSync
             {
                 LogUnauthorizedPeerReject(owner, nodeId);
             }
+            owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.UnauthorizedPeer, "Incoming peer is not authorized.", null, nodeId);
             return true;
         }
 
@@ -555,6 +579,7 @@ namespace Mizotake.UnityUiSync
             }
             catch (Exception exception)
             {
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.MalformedStamp, exception.Message);
                 if (owner.ShouldDebugLog())
                 {
                     LogMalformedStamp(owner, exception.Message);
@@ -616,6 +641,7 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleUnknownSyncId(CanvasUiSync owner, string syncId)
         {
+            owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.UnknownSyncId, "Unknown sync id.", syncId);
             if (owner.ShouldDebugLog() && owner.profile.logUnknownSyncId)
             {
                 LogUnknownSyncId(owner, syncId);
@@ -624,6 +650,10 @@ namespace Mizotake.UnityUiSync
 
         internal static void HandleTypeMismatch(CanvasUiSync owner, string syncId, string localType, string remoteType)
         {
+            if (owner.HasDiagnosticSubscribers)
+            {
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.TypeMismatch, "Local type " + localType + " does not match remote type " + remoteType + ".", syncId);
+            }
             if (owner.ShouldDebugLog() && owner.profile.logTypeMismatch)
             {
                 LogTypeMismatch(owner, syncId, localType, remoteType);
@@ -682,6 +712,7 @@ namespace Mizotake.UnityUiSync
             var registryMismatch = snapshotState.ExpectedStateCount >= 0 && snapshotState.HasCompletePayload && !string.IsNullOrEmpty(snapshotState.RemoteRegistryHash) && !snapshotState.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions());
             if (registryMismatch)
             {
+                owner.NotifyDiagnosticRaised(CanvasUiSyncDiagnosticCode.RegistryMismatch, "Snapshot registry does not match the local registry.", null, snapshotState.SourceNodeId);
                 owner.ignoredPeerSessions[snapshotState.SourceNodeId] = snapshotState.SourceSessionId;
                 DiscardPendingButtonCommitsFromPeerSession(owner, snapshotState.SourceNodeId, snapshotState.SourceSessionId);
                 owner.hasSnapshot = true;
@@ -710,6 +741,8 @@ namespace Mizotake.UnityUiSync
                 Debug.LogWarning(builder.ToString(), owner);
                 builder.Length = 0;
             }
+
+            owner.NotifySnapshotStatusChanged(registryMismatch ? CanvasUiSyncSnapshotStatus.RegistryMismatch : CanvasUiSyncSnapshotStatus.TimedOut, snapshotId, snapshotState);
 
             return true;
         }
@@ -767,6 +800,13 @@ namespace Mizotake.UnityUiSync
 
         private static void ResetActiveSnapshotReception(CanvasUiSync owner)
         {
+            owner.snapshotEventScratch.Clear();
+            foreach (var pair in owner.snapshotReceiveStates)
+            {
+                var state = pair.Value;
+                owner.snapshotEventScratch.Add(new CanvasUiSyncSnapshotEvent(CanvasUiSyncSnapshotStatus.Cancelled, pair.Key, state.SourceNodeId, state.SourceSessionId, state.ExpectedStateCount, state.ReceivedSyncIds.Count, state.PendingSyncIds.Count, state.RemoteRegistryHash, state.RemoteFullRegistryHash, state.IsRegistryCompatible(owner.registryHash, owner.fullRegistryHash, owner.HasConfiguredExclusions())));
+            }
+
             owner.snapshotIdScratch.Clear();
             foreach (var pair in owner.pendingRemoteCommits)
             {
@@ -785,6 +825,11 @@ namespace Mizotake.UnityUiSync
             owner.snapshotReceiveStates.Clear();
             owner.activeSnapshotIds.Clear();
             owner.activeSnapshotCanInitializeLocalState.Clear();
+            for (var index = 0; index < owner.snapshotEventScratch.Count; index++)
+            {
+                owner.NotifySnapshotStatusChanged(owner.snapshotEventScratch[index]);
+            }
+            owner.snapshotEventScratch.Clear();
         }
 
         internal static void CancelActiveSnapshotReception(CanvasUiSync owner)
@@ -795,6 +840,7 @@ namespace Mizotake.UnityUiSync
 
         private static void CompleteSnapshot(CanvasUiSync owner, string snapshotId)
         {
+            owner.snapshotReceiveStates.TryGetValue(snapshotId, out var completedState);
             owner.snapshotReceiveStates.Remove(snapshotId);
             owner.activeSnapshotIds.Remove(snapshotId);
             owner.activeSnapshotCanInitializeLocalState.Remove(snapshotId);
@@ -808,6 +854,10 @@ namespace Mizotake.UnityUiSync
             if (owner.ShouldDebugLog())
             {
                 LogSnapshotEnd(owner);
+            }
+            if (completedState != null)
+            {
+                owner.NotifySnapshotStatusChanged(CanvasUiSyncSnapshotStatus.Completed, snapshotId, completedState);
             }
         }
 
@@ -883,12 +933,19 @@ namespace Mizotake.UnityUiSync
 
         private static void StorePendingButtonCommit(CanvasUiSync owner, string syncId, CanvasUiSync.StateStamp stamp, string sourceNodeId, string sourceSessionId, bool waitForRegistryMatch)
         {
+            var isNewPendingSyncId = !owner.pendingRemoteButtonCommits.ContainsKey(syncId);
             if (owner.pendingRemoteButtonCommits.TryGetValue(syncId, out var existing) && !owner.IsIncomingStampNewer(existing.Stamp, stamp))
             {
                 return;
             }
 
-            owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, Time.unscaledTime, sourceNodeId, sourceSessionId, waitForRegistryMatch);
+            var receivedAt = Time.unscaledTime;
+            owner.pendingRemoteButtonCommits[syncId] = new CanvasUiSync.PendingButtonCommit(stamp, receivedAt, sourceNodeId, sourceSessionId, waitForRegistryMatch);
+            if (isNewPendingSyncId && !owner.bindings.ContainsKey(syncId))
+            {
+                owner.ArmPendingBindingDiscovery(receivedAt);
+            }
+            owner.SchedulePendingRemoteCommitCleanup(receivedAt + CanvasUiSync.PendingRemoteCommitTimeoutSeconds);
         }
 
         internal static bool ShouldDiscardPendingButtonCommit(CanvasUiSync owner, CanvasUiSync.PendingButtonCommit pending)

@@ -52,6 +52,87 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator PublicApi_TrySetValueSynchronizesAndRaisesRemoteNotification()
+        {
+            yield return LoadSampleScene();
+            var peerASync = FindSync("PeerACanvas");
+            var peerBSync = FindSync("PeerBCanvas");
+            var peerAPowerToggle = FindControl<Toggle>("PeerACanvas", "PowerToggle");
+            var peerBPowerToggle = FindControl<Toggle>("PeerBCanvas", "PowerToggle");
+            Assert.That(peerASync, Is.Not.Null);
+            Assert.That(peerBSync, Is.Not.Null);
+            Assert.That(peerAPowerToggle, Is.Not.Null);
+            Assert.That(peerBPowerToggle, Is.Not.Null);
+            var bindingInfos = new List<CanvasUiSyncBindingInfo>();
+            peerASync.CopyBindings(bindingInfos);
+            var syncId = bindingInfos.Single(info => info.Component == peerAPowerToggle).SyncId;
+            var remoteNotificationCount = 0;
+            peerBSync.StateApplied += value =>
+            {
+                if (value.SyncId == syncId && value.Origin == CanvasUiSyncValueOrigin.RemoteCommit)
+                {
+                    remoteNotificationCount++;
+                }
+            };
+
+            Assert.That(peerASync.TrySetValue(syncId, true), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+            yield return WaitUntil(() => peerBPowerToggle.isOn && remoteNotificationCount == 1, 60);
+
+            Assert.That(peerBPowerToggle.isOn, Is.True);
+            Assert.That(remoteNotificationCount, Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator PublicApi_SamePortReconfigurationRestartsHiddenAndAttachedTransports()
+        {
+            for (var topologyIndex = 0; topologyIndex < 2; topologyIndex++)
+            {
+                var ports = AllocatePortPair();
+                var attachTransportToCanvas = topologyIndex == 1;
+                var peerA = CreatePeer("PeerACanvas" + topologyIndex, "PeerA" + topologyIndex, "PeerB" + topologyIndex, ports.peerAPort, ports.peerBPort, false, false, attachTransportToCanvas);
+                var peerB = CreatePeer("PeerBCanvas" + topologyIndex, "PeerB" + topologyIndex, "PeerA" + topologyIndex, ports.peerBPort, ports.peerAPort, false, false, attachTransportToCanvas);
+                yield return WaitUntil(() => peerA.sync.ConnectedPeerCount == 1 && peerB.sync.ConnectedPeerCount == 1, 120);
+                var server = (uOSC.uOscServer)GetPrivateField(peerA.sync, "server");
+                var client = (uOSC.uOscClient)GetPrivateField(peerA.sync, "client");
+                var serverStartCount = 0;
+                var clientStartCount = 0;
+                server.onServerStarted.AddListener(_ => serverStartCount++);
+                client.onClientStarted.AddListener((_, _) => clientStartCount++);
+                var runtimeProfile = Object.Instantiate(peerA.sync.Profile);
+
+                Assert.That(peerA.sync.ApplyProfile(runtimeProfile), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+                Assert.That(server.isRunning, Is.True);
+                Assert.That(client.isRunning, Is.True);
+                Assert.That(serverStartCount, Is.EqualTo(1));
+                Assert.That(clientStartCount, Is.EqualTo(1));
+                yield return WaitUntil(() => peerA.sync.ConnectedPeerCount == 1 && peerB.sync.ConnectedPeerCount == 1, 120);
+                Assert.That(peerA.sync.TrySetValue(peerA.toggle, true), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+                yield return WaitUntil(() => peerB.toggle.isOn, 60);
+                Assert.That(peerB.toggle.isOn, Is.True);
+
+                var changedPorts = AllocatePortPair();
+                var peerAChangedProfile = Object.Instantiate(peerA.sync.Profile);
+                peerAChangedProfile.listenPort = changedPorts.peerAPort;
+                peerAChangedProfile.peerEndpoints[0].port = changedPorts.peerBPort;
+                var peerBChangedProfile = Object.Instantiate(peerB.sync.Profile);
+                peerBChangedProfile.listenPort = changedPorts.peerBPort;
+                peerBChangedProfile.peerEndpoints[0].port = changedPorts.peerAPort;
+                Assert.That(peerA.sync.ApplyProfile(peerAChangedProfile), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+                Assert.That(peerB.sync.ApplyProfile(peerBChangedProfile), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+                Assert.That(peerA.sync.GetStatus().TransportReady, Is.False);
+                Assert.That(peerA.sync.SendHelloNow(), Is.EqualTo(CanvasUiSyncApiResult.Busy));
+                yield return WaitUntil(() => peerA.sync.GetStatus().TransportReady && peerB.sync.GetStatus().TransportReady && peerA.sync.ConnectedPeerCount == 1 && peerB.sync.ConnectedPeerCount == 1, 180);
+                Assert.That(peerA.sync.GetStatus().TransportReady, Is.True);
+                Assert.That(peerA.sync.TrySetValue(peerA.toggle, false), Is.EqualTo(CanvasUiSyncApiResult.Succeeded));
+                yield return WaitUntil(() => !peerB.toggle.isOn, 60);
+                Assert.That(peerB.toggle.isOn, Is.False);
+                Object.Destroy(peerA.sync.gameObject);
+                Object.Destroy(peerB.sync.gameObject);
+                yield return WaitFrames(3);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator SampleScene_FormControlsAndButtonRemainOperationalAcrossPeers()
         {
             yield return LoadSampleScene();
@@ -1647,7 +1728,7 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
             Assert.That(peerBIndicator.text, Is.EqualTo("CLICKED"));
         }
 
-        private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false, bool initialToggleValue = false)
+        private static (CanvasUiSync sync, Toggle toggle, CanvasUiSyncSamplePresenter presenter) CreatePeer(string canvasName, string nodeId, string remoteNodeId, int listenPort, int remotePort, bool attachPresenter = false, bool initialToggleValue = false, bool attachTransportToCanvas = false)
         {
             var canvasObject = new GameObject(canvasName, typeof(Canvas), typeof(GraphicRaycaster));
             canvasObject.SetActive(false);
@@ -1672,6 +1753,13 @@ namespace Mizotake.UnityUiSync.Tests.PlayMode
                 presenter.powerToggleCheckmark.transform.SetParent(presenterObject.transform, false);
             }
 
+            if (attachTransportToCanvas)
+            {
+                canvasObject.AddComponent<uOSC.uOscServer>().port = listenPort;
+                var attachedClient = canvasObject.AddComponent<uOSC.uOscClient>();
+                attachedClient.address = "127.0.0.1";
+                attachedClient.port = remotePort;
+            }
             var sync = canvasObject.AddComponent<CanvasUiSync>();
             var profile = ScriptableObject.CreateInstance<CanvasUiSyncProfile>();
             profile.profileName = nodeId;

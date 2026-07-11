@@ -264,8 +264,9 @@ snapshot に含めるのは **状態型 UI のみ**とする。
 ## 9.4 v0.4 の制約
 
 * 静的 UI を主対象とする
-* ランタイム動的生成 UI は完全対応しない
-* 必要なら後続バージョンで手動登録 API を追加する
+* ランタイム動的生成 UI は階層変更検出と周期再走査で追従する
+* 生成側から `NotifyHierarchyChanged()` または `RefreshBindingsNow()` を呼ぶことで、外部コードから検出タイミングを明示できる
+* 動的 UI の安定した同期 ID には `CanvasUiSyncBindingId` を使用する
 
 ---
 

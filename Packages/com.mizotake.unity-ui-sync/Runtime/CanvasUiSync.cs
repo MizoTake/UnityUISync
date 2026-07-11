@@ -10,9 +10,12 @@ namespace Mizotake.UnityUiSync
 {
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Canvas))]
-    public sealed class CanvasUiSync : MonoBehaviour
+    public sealed partial class CanvasUiSync : MonoBehaviour
     {
         internal const float RuntimeHierarchyRescanIntervalSeconds = 0.1f;
+        internal const float RuntimeHierarchyPendingRescanIntervalSeconds = 0.01f;
+        internal const float RuntimeHierarchyPendingRescanMaxIntervalSeconds = 0.05f;
+        internal const float RuntimeHierarchyPendingFastRescanDurationSeconds = 1f;
         internal const float RuntimeHierarchyRescanMaxIntervalSeconds = 0.5f;
         internal const float PendingRemoteCommitTimeoutSeconds = 30f;
         internal const string HelloAddress = "/uisync/hello";
@@ -53,11 +56,14 @@ namespace Mizotake.UnityUiSync
         internal readonly List<string> stateCacheKeysToRemove = new List<string>();
         internal readonly List<string> expiredSnapshotIds = new List<string>();
         internal readonly List<string> snapshotIdScratch = new List<string>();
+        internal readonly List<CanvasUiSyncSnapshotEvent> snapshotEventScratch = new List<CanvasUiSyncSnapshotEvent>();
+        internal readonly List<NodeState> apiNodeScratch = new List<NodeState>();
         internal readonly List<string> expiredNodeIds = new List<string>();
         internal readonly List<string> bindingKeyScratch = new List<string>();
         internal readonly Dictionary<Transform, string> pathCacheScratch = new Dictionary<Transform, string>();
         internal readonly Dictionary<Transform, int> pathHashCacheScratch = new Dictionary<Transform, int>();
         internal readonly List<string> pathSegmentScratch = new List<string>();
+        internal readonly List<Selectable> selectableScratch = new List<Selectable>();
         internal readonly List<Toggle> toggleScratch = new List<Toggle>();
         internal readonly List<Toggle> dropdownItemToggleScratch = new List<Toggle>();
         internal readonly List<Slider> sliderScratch = new List<Slider>();
@@ -85,7 +91,9 @@ namespace Mizotake.UnityUiSync
         internal float nextStatisticsLogTime;
         internal float nextHierarchyRescanTime;
         internal float currentHierarchyRescanIntervalSeconds = RuntimeHierarchyRescanIntervalSeconds;
+        internal float pendingHierarchyFastRescanUntil;
         internal float nextPendingCommitTime = float.PositiveInfinity;
+        internal float nextPendingRemoteCommitCleanupTime = float.PositiveInfinity;
         internal float snapshotCooldownUntil;
         internal float acceptRequestedSnapshotFromNewerPeerUntil;
         internal int snapshotRetryCount;
@@ -103,18 +111,31 @@ namespace Mizotake.UnityUiSync
         internal int lastGcCollectionCount1;
         internal int lastGcCollectionCount2;
         internal int bindingHierarchySignature;
+        internal int apiMainThreadId = global::System.Threading.Thread.CurrentThread.ManagedThreadId;
         internal bool initialized;
         internal bool hasSnapshot;
         internal bool acceptRequestedSnapshotFromNewerPeer;
         internal bool resumeSynchronizationOnEnable;
         internal bool transportListenerSubscribed;
+        internal bool transportRestartPending;
+        internal bool ownsTransportHost;
+        internal bool ownsServer;
+        internal bool ownsClient;
+        internal bool startCompleted;
         internal bool hasConfiguredExclusions;
         internal uOscServer server;
         internal uOscClient client;
         internal Canvas canvasComponent;
         internal GameObject transportHost;
 
-        public bool SyncEnabled => syncEnabled;
+        public bool SyncEnabled
+        {
+            get
+            {
+                EnsureApiReadThread();
+                return syncEnabled;
+            }
+        }
 
         internal sealed class NodeState
         {
@@ -327,13 +348,24 @@ namespace Mizotake.UnityUiSync
 
         private void Awake()
         {
-            if (profile == null)
+            apiMainThreadId = global::System.Threading.Thread.CurrentThread.ManagedThreadId;
+            if (!TryInitializeRuntime())
             {
                 Debug.LogWarning("CanvasUiSync profile is not assigned.", this);
                 enabled = false;
-                return;
             }
+        }
 
+        private bool TryInitializeRuntime()
+        {
+            if (initialized)
+            {
+                return true;
+            }
+            if (profile == null)
+            {
+                return false;
+            }
             canvasId = string.IsNullOrWhiteSpace(canvasIdOverride) ? gameObject.name : canvasIdOverride.Trim();
             sessionId = Guid.NewGuid().ToString("N");
             sessionStartedAtTicks = DateTime.UtcNow.Ticks;
@@ -345,6 +377,7 @@ namespace Mizotake.UnityUiSync
             InitializeLocalState();
             bindingHierarchySignature = ComputeBindingHierarchySignature();
             initialized = true;
+            return true;
         }
 
         private void Start()
@@ -354,6 +387,7 @@ namespace Mizotake.UnityUiSync
                 return;
             }
 
+            startCompleted = true;
             ScheduleSynchronizationNow(Time.unscaledTime);
             lastGcCollectionCount0 = GC.CollectionCount(0);
             lastGcCollectionCount1 = GC.CollectionCount(1);
@@ -371,10 +405,22 @@ namespace Mizotake.UnityUiSync
             SubscribeTransportListener();
             if (rescanOnEnable)
             {
-                ScanBindings();
-                InitializeLocalState();
-                bindingHierarchySignature = ComputeBindingHierarchySignature();
-                ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
+                var previousBindingCount = bindings.Count;
+                var previousRegistryHash = registryHash;
+                var previousFullRegistryHash = fullRegistryHash;
+                apiStructuralOperationInProgress = true;
+                try
+                {
+                    ScanBindings();
+                    InitializeLocalState();
+                    bindingHierarchySignature = ComputeBindingHierarchySignature();
+                    ResetRuntimeHierarchyRescanSchedule(Time.unscaledTime);
+                }
+                finally
+                {
+                    apiStructuralOperationInProgress = false;
+                }
+                NotifyBindingsRefreshed(previousBindingCount, previousRegistryHash, previousFullRegistryHash);
             }
 
             if (resumeSynchronizationOnEnable && syncEnabled)
@@ -385,9 +431,13 @@ namespace Mizotake.UnityUiSync
                 snapshotRetryCount = 0;
                 snapshotCooldownUntil = 0f;
                 ScheduleSynchronizationNow(Time.unscaledTime);
-                SendHello();
-                RequestSnapshotIfNeeded(true);
+                if (!transportRestartPending)
+                {
+                    SendHello();
+                    RequestSnapshotIfNeeded(true);
+                }
             }
+            NotifySynchronizationStateChanged();
         }
 
         private void OnDisable()
@@ -401,10 +451,38 @@ namespace Mizotake.UnityUiSync
             resumeSynchronizationOnEnable = syncEnabled;
             CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
             ClearContinuousInteractionStates();
+            NotifySynchronizationStateChanged();
+        }
+
+        private void OnTransformChildrenChanged()
+        {
+            if (!initialized || !syncEnabled)
+            {
+                return;
+            }
+
+            var now = Time.unscaledTime;
+            if (HasPendingMissingBinding())
+            {
+                pendingHierarchyFastRescanUntil = now + RuntimeHierarchyPendingFastRescanDurationSeconds;
+                currentHierarchyRescanIntervalSeconds = RuntimeHierarchyPendingRescanIntervalSeconds;
+            }
+            else
+            {
+                currentHierarchyRescanIntervalSeconds = Mathf.Min(currentHierarchyRescanIntervalSeconds, RuntimeHierarchyRescanIntervalSeconds);
+            }
+            nextHierarchyRescanTime = Mathf.Min(nextHierarchyRescanTime, now);
         }
 
         public void SetSyncEnabled(bool value)
         {
+            EnsureApiReadThread();
+            if (apiStructuralOperationInProgress)
+            {
+                hasDeferredSyncEnabled = true;
+                deferredSyncEnabled = value;
+                return;
+            }
             if (syncEnabled == value)
             {
                 return;
@@ -413,6 +491,7 @@ namespace Mizotake.UnityUiSync
             syncEnabled = value;
             if (!initialized)
             {
+                NotifySynchronizationStateChanged();
                 return;
             }
 
@@ -421,6 +500,7 @@ namespace Mizotake.UnityUiSync
                 resumeSynchronizationOnEnable = false;
                 CanvasUiSyncProtocolService.CancelActiveSnapshotReception(this);
                 ClearContinuousInteractionStates();
+                NotifySynchronizationStateChanged();
                 return;
             }
 
@@ -430,8 +510,12 @@ namespace Mizotake.UnityUiSync
             snapshotRetryCount = 0;
             snapshotCooldownUntil = 0f;
             ScheduleSynchronizationNow(Time.unscaledTime);
-            SendHello();
-            RequestSnapshotIfNeeded(true);
+            if (!transportRestartPending)
+            {
+                SendHello();
+                RequestSnapshotIfNeeded(true);
+            }
+            NotifySynchronizationStateChanged();
         }
 
         public void EnableSync()
@@ -446,6 +530,12 @@ namespace Mizotake.UnityUiSync
 
         public void RefreshExclusions()
         {
+            EnsureApiReadThread();
+            if (apiNotificationDepth > 0)
+            {
+                nextHierarchyRescanTime = Mathf.Min(nextHierarchyRescanTime, Time.unscaledTime);
+                return;
+            }
             RefreshExclusionRules(true);
             PruneExcludedPendingCommits();
             if (!initialized)
@@ -458,12 +548,41 @@ namespace Mizotake.UnityUiSync
 
         private void Update()
         {
-            if (!initialized || !syncEnabled)
+            if (!initialized)
+            {
+                return;
+            }
+            if (hasDeferredSyncEnabled)
+            {
+                var deferredValue = deferredSyncEnabled;
+                hasDeferredSyncEnabled = false;
+                SetSyncEnabled(deferredValue);
+            }
+            if (!syncEnabled)
             {
                 return;
             }
 
             var now = Time.unscaledTime;
+            if (transportRestartPending)
+            {
+                if (server == null || client == null || !server.isRunning || !client.isRunning)
+                {
+                    return;
+                }
+
+                transportRestartPending = false;
+                ScheduleSynchronizationNow(now);
+                AllowRequestedSnapshotFromNewerPeer();
+                hasSnapshot = false;
+                snapshotRetryCount = 0;
+                snapshotCooldownUntil = 0f;
+                SendHello();
+                nextHelloTime = now + Mathf.Max(0.1f, profile.helloIntervalSeconds);
+                RequestSnapshotIfNeeded(true);
+                NotifySynchronizationStateChanged();
+                return;
+            }
             if (now >= nextHelloTime)
             {
                 SendHello();
@@ -478,6 +597,7 @@ namespace Mizotake.UnityUiSync
             UpdatePolledBindings();
             TickNodeTimeout(now);
             FlushPendingCommits(now);
+            TickPendingRemoteCommitCleanup(now);
             TickRuntimeHierarchyRescan(now);
         }
 
@@ -489,6 +609,8 @@ namespace Mizotake.UnityUiSync
             {
                 binding.Dispose();
             }
+
+            ReleaseOwnedTransport();
         }
 
         internal bool CanProcessRuntimeEvents()
@@ -579,6 +701,16 @@ namespace Mizotake.UnityUiSync
         internal void InitializeTransport()
         {
             CanvasUiSyncTransportService.InitializeTransport(this);
+        }
+
+        internal void RestartTransport()
+        {
+            CanvasUiSyncTransportService.RestartTransport(this);
+        }
+
+        internal void ReleaseOwnedTransport()
+        {
+            CanvasUiSyncTransportService.ReleaseOwnedTransport(this);
         }
 
         internal GameObject GetOrCreateTransportHost()
@@ -698,12 +830,33 @@ namespace Mizotake.UnityUiSync
 
         internal void PrunePendingRemoteCommits()
         {
-            if (pendingRemoteCommits.Count == 0 && pendingRemoteButtonCommits.Count == 0)
+            PrunePendingRemoteCommits(Time.unscaledTime);
+        }
+
+        internal void TickPendingRemoteCommitCleanup(float now)
+        {
+            if (now < nextPendingRemoteCommitCleanupTime)
             {
                 return;
             }
 
-            var now = Time.unscaledTime;
+            PrunePendingRemoteCommits(now);
+        }
+
+        internal void SchedulePendingRemoteCommitCleanup(float expiresAt)
+        {
+            nextPendingRemoteCommitCleanupTime = Mathf.Min(nextPendingRemoteCommitCleanupTime, expiresAt);
+        }
+
+        private void PrunePendingRemoteCommits(float now)
+        {
+            if (pendingRemoteCommits.Count == 0 && pendingRemoteButtonCommits.Count == 0)
+            {
+                nextPendingRemoteCommitCleanupTime = float.PositiveInfinity;
+                return;
+            }
+
+            var nextCleanupTime = float.PositiveInfinity;
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteCommits)
             {
@@ -712,8 +865,10 @@ namespace Mizotake.UnityUiSync
                     continue;
                 }
 
-                if (now - pair.Value.ReceivedAt <= Mathf.Max(0f, pair.Value.TimeoutSeconds))
+                var expiresAt = pair.Value.ReceivedAt + Mathf.Max(0f, pair.Value.TimeoutSeconds);
+                if (now <= expiresAt)
                 {
+                    nextCleanupTime = Mathf.Min(nextCleanupTime, expiresAt);
                     continue;
                 }
 
@@ -728,8 +883,10 @@ namespace Mizotake.UnityUiSync
             stateCacheKeysToRemove.Clear();
             foreach (var pair in pendingRemoteButtonCommits)
             {
-                if (now - pair.Value.ReceivedAt <= PendingRemoteCommitTimeoutSeconds)
+                var expiresAt = pair.Value.ReceivedAt + PendingRemoteCommitTimeoutSeconds;
+                if (now <= expiresAt)
                 {
+                    nextCleanupTime = Mathf.Min(nextCleanupTime, expiresAt);
                     continue;
                 }
 
@@ -742,6 +899,7 @@ namespace Mizotake.UnityUiSync
             }
 
             stateCacheKeysToRemove.Clear();
+            nextPendingRemoteCommitCleanupTime = nextCleanupTime;
         }
 
         internal bool IsSnapshotStatePending(string syncId)
@@ -793,6 +951,11 @@ namespace Mizotake.UnityUiSync
 
         internal bool IsComponentExcluded(Component component)
         {
+            return IsComponentExcluded(component, null);
+        }
+
+        internal bool IsComponentExcluded(Component component, Dictionary<Transform, string> pathCache)
+        {
             if (component == null)
             {
                 return false;
@@ -808,7 +971,7 @@ namespace Mizotake.UnityUiSync
                         continue;
                     }
 
-                    if (TryReadExclusionLocator(exclusion, out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType))
+                    if (TryReadExclusionLocator(exclusion, out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType, pathCache))
                     {
                         return true;
                     }
@@ -819,7 +982,7 @@ namespace Mizotake.UnityUiSync
             {
                 for (var index = 0; index < excludedComponents.Count; index++)
                 {
-                    if (TryBuildExclusionLocator(excludedComponents[index], out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType))
+                    if (TryBuildExclusionLocator(excludedComponents[index], out var bindingId, out var hierarchyPath, out var componentType) && MatchesExclusionLocator(component, bindingId, hierarchyPath, componentType, pathCache))
                     {
                         return true;
                     }
@@ -1012,7 +1175,7 @@ namespace Mizotake.UnityUiSync
             return !string.IsNullOrEmpty(hierarchyPath);
         }
 
-        private bool MatchesExclusionLocator(Component component, string bindingId, string hierarchyPath, string excludedComponentType)
+        private bool MatchesExclusionLocator(Component component, string bindingId, string hierarchyPath, string excludedComponentType, Dictionary<Transform, string> pathCache)
         {
             var componentBindingId = ReadExplicitBindingId(component);
             if (!string.IsNullOrWhiteSpace(bindingId))
@@ -1025,7 +1188,7 @@ namespace Mizotake.UnityUiSync
                 return false;
             }
 
-            return string.Equals(CanvasUiSyncBindingsService.BuildPath(this, component.transform), hierarchyPath, StringComparison.Ordinal) && IsComponentTypeExcluded(component, excludedComponentType);
+            return string.Equals(CanvasUiSyncBindingsService.BuildPath(this, component.transform, pathCache), hierarchyPath, StringComparison.Ordinal) && IsComponentTypeExcluded(component, excludedComponentType);
         }
 
         private bool MatchesExcludedSyncId(string syncId, string bindingId, string hierarchyPath, string excludedComponentType)
@@ -1207,7 +1370,20 @@ namespace Mizotake.UnityUiSync
 
         internal bool RefreshBindingsIfHierarchyChanged(bool force)
         {
-            return CanvasUiSyncBindingsService.RefreshBindingsIfHierarchyChanged(this, force);
+            if (apiStructuralOperationInProgress)
+            {
+                return false;
+            }
+
+            apiStructuralOperationInProgress = true;
+            try
+            {
+                return CanvasUiSyncBindingsService.RefreshBindingsIfHierarchyChanged(this, force);
+            }
+            finally
+            {
+                apiStructuralOperationInProgress = false;
+            }
         }
 
         internal int ComputeBindingHierarchySignature()
@@ -1219,6 +1395,35 @@ namespace Mizotake.UnityUiSync
         {
             currentHierarchyRescanIntervalSeconds = RuntimeHierarchyRescanIntervalSeconds;
             nextHierarchyRescanTime = now + currentHierarchyRescanIntervalSeconds;
+        }
+
+        internal void ArmPendingBindingDiscovery(float now)
+        {
+            var isAlreadyArmed = now < pendingHierarchyFastRescanUntil;
+            pendingHierarchyFastRescanUntil = now + RuntimeHierarchyPendingFastRescanDurationSeconds;
+            currentHierarchyRescanIntervalSeconds = isAlreadyArmed ? Mathf.Min(currentHierarchyRescanIntervalSeconds, RuntimeHierarchyPendingRescanMaxIntervalSeconds) : RuntimeHierarchyPendingRescanIntervalSeconds;
+            nextHierarchyRescanTime = Mathf.Min(nextHierarchyRescanTime, now + currentHierarchyRescanIntervalSeconds);
+        }
+
+        internal bool HasPendingMissingBinding()
+        {
+            foreach (var syncId in pendingRemoteCommits.Keys)
+            {
+                if (!bindings.ContainsKey(syncId))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var syncId in pendingRemoteButtonCommits.Keys)
+            {
+                if (!bindings.ContainsKey(syncId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal int ComputeStableHash(string value)
